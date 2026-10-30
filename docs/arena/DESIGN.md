@@ -46,6 +46,9 @@
   - team-battle：最后仍有存活蛇的队伍胜；同 tick 全灭为平局；到 `maxTicks` 时比存活数，再比队伍总长度。
   - team-score：队伍总分高者胜。
   - 个人成绩仍逐条记录。
+- **死亡蛇不再构成障碍**（尸体从碰撞中移除）；`ScriptState.snakes` 里仍保留其 `alive=false` 与死亡时 `body` 供观察，画布淡化显示。
+- team-battle 到 `maxTicks` 时：先比存活数，再比全队总长度（含已死亡队员）。团队名次：胜方两人 rank=1，负方两人 rank=3；平局全部 rank=1。
+- `Replay.disqualifications?: Array<{ tick; slot; phase?: 'init' | 'move' }>`（core 新增可选字段）：方向字母无法表达失格，重放据此在对应 tick 判死。
 - 脚本出错 / 超时 / 返回非法值 / 180°：**保持原方向**（与旧规则一致，不做贪心兜底），计入 `errors`/`timeouts`/`invalidMoves`。
 - 失格（`disqualified`，蛇当场死亡）：`init` 抛错或超时；连续 50 次失败（错误+超时+非法）；单局累计 CPU 超过 `config.matchCpuBudgetMs`。
 

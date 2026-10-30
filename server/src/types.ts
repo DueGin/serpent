@@ -1,191 +1,185 @@
 export type Direction = 'up' | 'down' | 'left' | 'right';
 export type GameMode = 'solo' | 'score' | 'battle';
-export type PlayerKind = 'human' | 'agent';
-export type RoomStatus = 'lobby' | 'countdown' | 'running' | 'ended';
-export type BotStrategy = 'greedy' | 'coward' | 'random';
-export type AgentThinkStatus = 'idle' | 'thinking' | 'done' | 'timeout' | 'error';
+export type BuiltinBot = 'greedy' | 'coward' | 'random';
+export type MatchKind = 'test' | 'exhibition' | 'ladder' | 'benchmark';
+export type MatchStatus = 'queued' | 'running' | 'done' | 'error';
+export type ScriptVisibility = 'private' | 'listed' | 'open';
+export type VersionStatus = 'pending' | 'valid' | 'invalid';
+export type DeathReason = 'wall' | 'self' | 'snake' | 'head' | 'disqualified';
+export type EndReason = 'last_alive' | 'all_dead' | 'max_ticks' | 'target_score';
 
-export interface AgentThink {
-  status: AgentThinkStatus;
-  direction?: Direction | null;
-  elapsedMs?: number;
-}
+export interface Point { x: number; y: number }
 
-export function clampThinkTimeoutSec(sec?: number): number {
-  const n = Math.round(Number(sec ?? 10));
-  if (!Number.isFinite(n)) return 10;
-  return Math.min(60, Math.max(3, n));
-}
-
-export interface Point {
-  x: number;
-  y: number;
-}
-
-export interface Snake {
-  id: string;
-  name: string;
-  kind: PlayerKind;
-  color: string;
-  body: Point[];
-  dir: Direction;
-  pendingDir: Direction | null;
-  alive: boolean;
-  score: number;
-  kills: number;
-  ready: boolean;
-  /** In-process bot; empty for remote agents / humans. */
-  strategy?: BotStrategy;
-}
-
-export interface GameEvent {
-  tick: number;
-  type: 'eat' | 'die' | 'win' | 'spawn' | 'info';
-  playerId?: string;
-  message: string;
-}
-
-export interface GameState {
+export interface MatchConfig {
   mode: GameMode;
-  status: RoomStatus;
+  teams: boolean;
   width: number;
   height: number;
-  tickMs: number;
   wrap: boolean;
-  tick: number;
-  foods: Point[];
-  snakes: Snake[];
   foodCount: number;
+  maxTicks: number;
   targetScore: number | null;
-  timeLimitMs: number | null;
-  elapsedMs: number;
-  rng: () => number;
-  events: GameEvent[];
-  winners: string[];
+  seed: number;
+  moveTimeoutMs: number;
+  initTimeoutMs: number;
+  memoryLimitMB: number;
+  matchCpuBudgetMs: number;
 }
 
-export interface CreatePlayerInput {
-  id: string;
+export interface ParticipantInput {
+  slot: number;
   name: string;
-  kind: PlayerKind;
-  color: string;
-  strategy?: BotStrategy;
-  spawnIndex?: number;
+  team: number | null;
+  source: { kind: 'script'; code: string } | { kind: 'builtin'; bot: BuiltinBot };
 }
 
-export interface CreateGameInput {
-  mode: GameMode;
-  width?: number;
-  height?: number;
-  tickMs?: number;
-  wrap?: boolean;
-  foodCount?: number;
-  targetScore?: number | null;
-  timeLimitMs?: number | null;
-  players: CreatePlayerInput[];
-  foods?: Point[];
-  rng?: () => number;
+export interface SimulateInput {
+  config: MatchConfig;
+  participants: ParticipantInput[];
+  captureLogs?: boolean;
 }
 
-export interface PublicSnake {
-  id: string;
-  name: string;
-  kind: PlayerKind;
-  color: string;
+export interface ParticipantResult {
+  slot: number;
+  rank: number;
+  score: number;
+  length: number;
+  alive: boolean;
+  deathTick: number | null;
+  deathReason: DeathReason | null;
+  kills: number;
+  moves: number;
+  timeouts: number;
+  errors: number;
+  invalidMoves: number;
+  avgMoveMs: number;
+  maxMoveMs: number;
+  cpuMs: number;
+  firstError?: string;
+  logs?: Array<{ tick: number; text: string }>;
+}
+
+export interface Replay {
+  v: 1;
+  engine: string;
+  config: MatchConfig;
+  players: Array<{ slot: number; name: string; team: number | null; color: string }>;
+  moves: string[];
+  /** Disqualification cannot be represented by a direction in moves. */
+  disqualifications?: Array<{ tick: number; slot: number; phase?: 'init' | 'move' }>;
+}
+
+export interface SimulateResult {
+  ticks: number;
+  endReason: EndReason;
+  winners: number[];
+  winnerTeam: number | null;
+  participants: ParticipantResult[];
+  replay: Replay;
+  durationMs: number;
+}
+
+export interface FrameSnake {
+  slot: number;
   body: Point[];
   dir: Direction;
   alive: boolean;
   score: number;
-  kills: number;
-  ready: boolean;
-  isBot: boolean;
-  think?: AgentThink;
+  length: number;
 }
+export interface FrameEvent { type: 'eat' | 'die' | 'win'; slot?: number; message: string }
+export interface Frame { tick: number; snakes: FrameSnake[]; foods: Point[]; events: FrameEvent[] }
 
-export interface PublicRoom {
-  id: string;
-  code: string;
-  mode: GameMode;
-  status: RoomStatus;
-  countdown: number;
-  tick: number;
-  width: number;
-  height: number;
-  tickMs: number;
-  wrap: boolean;
-  foods: Point[];
-  players: PublicSnake[];
-  hostId: string;
-  remainingMs: number | null;
-  targetScore: number | null;
-  maxPlayers: number;
-  winners: { id: string; name: string; score: number }[];
-  events: GameEvent[];
-  you?: PublicSnake;
-  waitingOn?: string[];
-  thinkTimeoutSec?: number;
-}
-
-export interface Observation {
-  protocol: 'serpent-v1';
-  mode: GameMode;
-  status: RoomStatus;
-  tick: number;
-  tickMs: number;
-  width: number;
-  height: number;
-  wrap: boolean;
-  remainingMs: number | null;
-  targetScore: number | null;
-  you: {
-    id: string;
-    name: string;
-    head: Point | null;
-    body: Point[];
-    dir: Direction | null;
-    alive: boolean;
-    score: number;
-    kills: number;
+export type CheckStatus = 'pass' | 'warn' | 'fail';
+export interface CheckItem { id: string; label: string; status: CheckStatus; detail?: string }
+export interface CheckReport {
+  ok: boolean;
+  items: CheckItem[];
+  stats?: {
+    soloAvgScore: number;
+    soloAvgTicks: number;
+    battleWinRateVsGreedy: number;
+    avgMoveMs: number;
+    maxMoveMs: number;
   };
-  snakes: Array<{
-    id: string;
-    name: string;
-    kind: PlayerKind;
-    head: Point | null;
-    body: Point[];
-    dir: Direction;
-    alive: boolean;
-    score: number;
-  }>;
+  checkedAt: number;
+  durationMs: number;
+}
+
+export interface SnakeView {
+  id: string;
+  slot: number;
+  name: string;
+  team: number | null;
+  head: Point | null;
+  body: Point[];
+  dir: Direction;
+  length: number;
+  score: number;
+  alive: boolean;
+}
+
+export interface InitInfo {
+  protocol: 'serpent-script-v1';
+  mode: GameMode;
+  teams: boolean;
+  width: number;
+  height: number;
+  wrap: boolean;
+  maxTicks: number;
+  targetScore: number | null;
+  you: { id: string; slot: number; team: number | null };
+  players: Array<{ id: string; slot: number; name: string; team: number | null }>;
+  limits: { moveTimeoutMs: number; initTimeoutMs: number; memoryLimitMB: number };
+}
+
+export interface ScriptState {
+  protocol: 'serpent-script-v1';
+  tick: number;
+  maxTicks: number;
+  remainingTicks: number;
+  mode: GameMode;
+  teams: boolean;
+  width: number;
+  height: number;
+  wrap: boolean;
+  targetScore: number | null;
+  you: SnakeView;
+  snakes: SnakeView[];
   foods: Point[];
   legalMoves: Direction[];
-  grid: string;
-  gameOver: boolean;
-  winners: string[];
 }
 
-export const DIRECTIONS: Direction[] = ['up', 'down', 'left', 'right'];
+export interface ScenarioInfo {
+  id: string;
+  title: string;
+  description: string;
+  init: InitInfo;
+  state: ScriptState;
+}
+export interface DryRunInput { code: string; scenario?: string; state?: ScriptState; init?: InitInfo }
+export interface DryRunResult {
+  ok: boolean;
+  direction: Direction | null;
+  raw: unknown;
+  legal: boolean;
+  logs: string[];
+  initMs: number;
+  moveMs: number;
+  error?: string;
+}
 
+export const PLAYBACK_TICK_MS = 120;
+export const COLORS = ['#e8c547', '#e23d2a', '#3ecf8e', '#4ea3f0'];
+export const DIRECTIONS: Direction[] = ['up', 'down', 'left', 'right'];
 export const DELTA: Record<Direction, Point> = {
   up: { x: 0, y: -1 },
   down: { x: 0, y: 1 },
   left: { x: -1, y: 0 },
   right: { x: 1, y: 0 },
 };
-
 export const OPPOSITE: Record<Direction, Direction> = {
-  up: 'down',
-  down: 'up',
-  left: 'right',
-  right: 'left',
+  up: 'down', down: 'up', left: 'right', right: 'left',
 };
-
-export const COLORS = ['#e8c547', '#e23d2a', '#3ecf8e', '#4ea3f0'];
-
-export function pointKey(p: Point): string {
-  return `${p.x},${p.y}`;
-}
-
-export function pointsEqual(a: Point, b: Point): boolean {
-  return a.x === b.x && a.y === b.y;
-}
+export function pointKey(p: Point): string { return `${p.x},${p.y}`; }
+export function pointsEqual(a: Point, b: Point): boolean { return a.x === b.x && a.y === b.y; }
