@@ -8,6 +8,7 @@ const nativeProcess = process;
 for (const key of Object.keys(nativeProcess.env)) delete nativeProcess.env[key];
 const nativeNow = performance.now.bind(performance);
 const PROTOCOL_LIMIT = 2 * 1024 * 1024;
+const INTERRUPT_GRACE_MS = 1000;
 
 if (isMainThread) {
   const interrupt = new Int32Array(new SharedArrayBuffer(4));
@@ -63,7 +64,10 @@ if (isMainThread) {
       if (!pending) return;
       pending.interrupted = true;
       Atomics.store(interrupt, 0, 2);
-      pending.grace = setTimeout(() => fail('Python 中断宽限期耗尽，已终止进程并失格'), 200);
+      // A loaded host can starve the interpreter thread well past the call budget; killing at
+      // 200ms turned ordinary overload into a disqualification. Keep the grace generous but
+      // strictly below the parent's own deadline below.
+      pending.grace = setTimeout(() => fail('Python 中断宽限期耗尽，已终止进程并失格'), INTERRUPT_GRACE_MS);
     }, timeout);
     worker.postMessage(message);
   });

@@ -79,7 +79,7 @@ Python 需要 Node.js 22、本地完整 Pyodide 资源，以及 OS 隔离：macO
 
 隔离器缺失、命名空间/挂载被拒、解释器在接收用户代码前启动失败或握手超时，以及并发池已满，均为基础设施故障：检测/试跑/创建/提交版本返回 **HTTP 503 / `PYTHON_UNAVAILABLE`**，不产生 fail 检测报告，不保存 invalid 版本，创建也不留下空脚本。对局整局标记 `error`，不判 Python 参赛者失格、不记录输赢或天梯成绩。池满可稍后重试；部署问题请联系管理员，无需修改脚本。代码语法错误、运行时异常、执行超时或资源超限仍按用户代码失败处理。
 
-并发与预热按 runner worker 配置：`PYTHON_MAX_HOSTS` 默认 4，`PYTHON_WARM_HOSTS` 默认 1（设为 0 可关闭预热），`PYTHON_STARTUP_TIMEOUT_MS` 默认 15000。预热只保留未执行用户代码的解释器，领取后不回收复用。`PYTHON_ISOLATOR_COMMAND` 可由管理员指定可信的隔离器可执行文件路径，沿用对应平台生产参数；这是部署/测试注入点，不能指向会忽略隔离参数的普通命令，不能由用户请求控制。
+并发与预热按 runner worker 配置：`PYTHON_MAX_HOSTS` 默认 4，`PYTHON_WARM_HOSTS` 默认 1（设为 0 可关闭预热），`PYTHON_STARTUP_TIMEOUT_MS` 默认 15000。预热只保留未执行用户代码的解释器，领取后不回收复用。`PYTHON_ISOLATOR_COMMAND` 是仅在 `NODE_ENV=test` 下生效的测试注入点（用于模拟隔离器故障），生产环境会忽略它。
 
 ## 3. InitInfo
 

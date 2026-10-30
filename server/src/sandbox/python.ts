@@ -87,7 +87,7 @@ class PythonHost {
       return await new Promise<Reply>((resolve, reject) => {
         const id = ++this.sequence;
         const timer = setTimeout(() => this.stop(this.userCodeStarted ? 'Python 中断无响应，已终止进程并失格'
-          : 'Python 解释器未开始执行用户代码，启动确认超时'), timeoutMs + 1000);
+          : 'Python 解释器未开始执行用户代码，启动确认超时'), timeoutMs + 3000);
         this.pending = { id, resolve, reject, timer };
         this.child.send({ id, operation, payload: text, timeoutMs, memoryLimitMB }, (error) => {
           if (error) this.stop('Python IPC 通道已断开，已失格');

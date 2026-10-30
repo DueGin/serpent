@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc && cp src/sandbox/python-host.cjs src/sandbox/python-bootstrap.py dist/sandbox/",
     "start": "node dist/index.js",
-    "test": "tsx --test --test-concurrency=2 \"src/**/*.test.ts\"",
+    "test": "NODE_ENV=test tsx --test --test-concurrency=2 \"src/**/*.test.ts\"",
     "serpent": "tsx src/cli/serpent.ts"
   },
   "dependencies": {

@@ -25,8 +25,9 @@ export function pythonHostCommand(entry: string, resources: string, probe = fals
     `--allow-fs-read=${join(dirname(entry), 'python-bootstrap.py')}`, '--allow-worker',
     '--disallow-code-generation-from-strings', '--max-old-space-size=192',
     ...(probe ? ['-e', 'process.exit(0)'] : [entry, resources])];
-  // Only deployment configuration can replace the isolator, never an API input.
-  const override = process.env.PYTHON_ISOLATOR_COMMAND;
+  // Test-only fault injection: replacing the isolator executable must never be possible in a
+  // real deployment, where a misconfigured wrapper could silently drop the isolation flags.
+  const override = process.env.NODE_ENV === 'test' ? process.env.PYTHON_ISOLATOR_COMMAND : undefined;
   if (process.platform === 'darwin' && (override || existsSync('/usr/bin/sandbox-exec'))) {
     const literal = (value: string) => `(literal ${JSON.stringify(value)})`;
     const profile = '(version 1)(allow default)(deny network*)(deny file-write*)(deny process-fork)' +
