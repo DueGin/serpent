@@ -26,6 +26,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: 准备 Python 沙箱（bubblewrap 与非特权用户命名空间）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          # Ubuntu 23.10+ 默认限制非特权用户命名空间，bubblewrap 需要它为每个解释器建立隔离。
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --unshare-all --ro-bind / / -- /bin/true
       - name: 服务端测试
         run: pnpm --filter server test
       - name: 服务端类型检查
@@ -55,9 +62,16 @@ jobs:
             NPM_REGISTRY=https://registry.npmjs.org
           cache-from: type=gha,scope=serpent-amd64
           cache-to: type=gha,mode=max,scope=serpent-amd64
-      - name: 启动容器并检查网页、接口与 MCP
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 放开宿主的非特权用户命名空间限制（容器内 Python 沙箱需要）
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: 按生产配置启动容器并检查网页、接口、MCP 与 JS/Python 对局
         run: |
-          docker run -d --name serpent -p 8008:8008 -e LADDER_AUTO=0 serpent:ci
+          docker run -d --name serpent -p 8008:8008 -e LADDER_AUTO=0 --init \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --security-opt systempaths=unconfined serpent:ci
           for i in $(seq 1 60); do
             if curl -sf http://localhost:8008/api/health >/dev/null; then break; fi
             sleep 1
@@ -67,6 +81,7 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8008/matches/1)" = 200
           curl -sf http://localhost:8008/api/docs/rules >/dev/null
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8008/mcp)" = 405
+          node scripts/smoke.mjs http://localhost:8008 --python
       - name: 容器日志
         if: always()
         run: docker logs serpent || true
