@@ -1,0 +1,444 @@
+:root {
+  --bg: #120e0a;
+  --bg-2: #1a1410;
+  --ink: #f3ead8;
+  --muted: #b7a48a;
+  --line: #3a2c22;
+  --sodium: #e8c547;
+  --signal: #e23d2a;
+  --mint: #3ecf8e;
+  --sky: #4ea3f0;
+  --cabinet: #241910;
+  --bezel: #2c2016;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(232, 197, 71, 0.08), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(226, 61, 42, 0.08), transparent 50%),
+    var(--bg);
+  color: var(--ink);
+  font-family: "ZCOOL QingKe HuangYou", "Red Hat Mono", sans-serif;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+body::before {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.18'/%3E%3C/svg%3E");
+  opacity: 0.18;
+  mix-blend-mode: overlay;
+  z-index: 0;
+}
+
+button, input {
+  font-family: inherit;
+}
+
+a { color: var(--sodium); }
+
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 22px 80px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.brand-en {
+  font-family: Anton, sans-serif;
+  font-size: clamp(42px, 8vw, 72px);
+  line-height: 0.9;
+  letter-spacing: 0.02em;
+  color: var(--sodium);
+  text-shadow: 3px 3px 0 #000;
+}
+
+.brand-zh {
+  font-size: 22px;
+  color: var(--ink);
+  margin-top: 4px;
+}
+
+.brand-sub {
+  font-family: "Red Hat Mono", monospace;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.nick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.nick label {
+  font-family: "Red Hat Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.nick input, .join-row input, .agent-dock input {
+  background: #0c0907;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 10px 12px;
+  font-size: 16px;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 18px 0 28px;
+}
+
+.mode-card {
+  text-align: left;
+  background: linear-gradient(180deg, #1c1510, #14100c);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 18px 16px 16px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.mode-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -20px -20px auto;
+  width: 90px;
+  height: 90px;
+  background: repeating-linear-gradient(-45deg, #0000, #0000 6px, rgba(232,197,71,.15) 6px, rgba(232,197,71,.15) 12px);
+}
+
+.mode-card:hover { border-color: var(--sodium); }
+
+.mode-card .en {
+  font-family: Anton, sans-serif;
+  font-size: 28px;
+  color: var(--sodium);
+}
+
+.mode-card p {
+  margin: 8px 0 14px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.btn {
+  border: 0;
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 16px;
+  background: var(--sodium);
+  color: #1a1204;
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn.danger { background: var(--signal); color: #fff; }
+.btn.mint { background: var(--mint); color: #062016; }
+
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.join-row, .toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.rooms {
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.rooms h2 {
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+}
+
+.room-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line);
+  font-family: "Red Hat Mono", monospace;
+  font-size: 14px;
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-row:hover {
+  border-bottom-color: var(--sodium);
+}
+
+.pill {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.pill.live {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+.think-pill {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+.think-pill.thinking {
+  border-color: var(--sodium);
+  color: var(--sodium);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.think-pill.done {
+  border-color: var(--mint);
+  color: var(--mint);
+}
+
+.think-pill.timeout,
+.think-pill.error {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+@keyframes pulse {
+  50% { opacity: 0.45; }
+}
+
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--sodium);
+}
+
+.play {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+}
+
+.cabinet {
+  background: var(--cabinet);
+  border: 10px solid var(--bezel);
+  box-shadow: 0 20px 60px rgba(0,0,0,.45), inset 0 0 0 2px #000;
+  position: relative;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.side, .topbar {
+  position: relative;
+  z-index: 2;
+}
+
+.cabinet canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #070604;
+  image-rendering: pixelated;
+}
+
+.scan {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255,255,255,0.03),
+    rgba(255,255,255,0.03) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+
+.overlay-msg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-family: Anton, sans-serif;
+  font-size: clamp(36px, 6vw, 72px);
+  color: var(--sodium);
+  text-shadow: 0 0 24px rgba(232,197,71,.45);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel {
+  background: #16110d;
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+
+.panel h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  letter-spacing: 0.14em;
+}
+
+.score-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-family: "Red Hat Mono", monospace;
+  font-size: 13px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.agent-dock pre {
+  margin: 8px 0 0;
+  background: #0b0806;
+  color: #d7c4a3;
+  padding: 10px;
+  font-size: 11px;
+  overflow: auto;
+  line-height: 1.45;
+}
+
+.hint {
+  font-family: "Red Hat Mono", monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.flash {
+  min-height: 18px;
+  color: var(--signal);
+  font-size: 14px;
+}
+
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: #16110d;
+  border: 1px solid var(--line);
+  padding: 28px 24px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 18px 0 12px;
+}
+
+.auth-form label,
+.panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.auth-form input,
+.auth-form select,
+.panel select,
+.panel textarea,
+.panel input {
+  background: #0c0907;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 10px 12px;
+  font-size: 15px;
+  font-family: "Red Hat Mono", monospace;
+}
+
+.account-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lobby-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 18px;
+}
+
+.agent-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.agent-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+@media (max-width: 900px) {
+  .mode-grid, .play, .lobby-grid, .agent-layout { grid-template-columns: 1fr; }
+  .topbar { flex-direction: column; align-items: start; }
+}
