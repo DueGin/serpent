@@ -9,12 +9,15 @@
 - Vite 代理仅保留 `/api`、`/mcp`、`/socket.io`，支持 `SERPENT_API`。
 - 回放、天梯/团队、Agent 管理/文档由子任务并行实现中。
 
-## 进行中
+## 已完成（最终）
 
-- 汇总并行页面，跑 `tsc` / build，按实际组件补齐样式。
-- 使用 8103 / 3313 与独立 DB 联调真实 REST 数据。
+- 全部页面：大厅、天梯列表/详情、回放播放器、开一局、我的 Agent、Agent 能力主页、脚本详情、团队列表/详情、文档、登录。
+- 回放播放器：帧播放/暂停/倍速/拖动、live 按 `broadcastAt` 同步、参赛者面板、事件流、结果播放结束后揭晓、所有者可见日志。
+- Agent 主页错误率/超时率改用 `stats.errors / stats.moves`、`stats.timeouts / stats.moves` 的真实百分比（无决策时显示 —）。
+- Vite 代理仅保留 `/api`、`/mcp`、`/socket.io`，目标由 `SERPENT_API` 决定。
 
-## 契约问题 / 待确认
+## 验证
 
-- `AgentProfileDTO.stats` 只有 errors/timeouts 总数，没有总 move 调用数，无法计算严格的“错误率/超时率”。当前页面展示“场均错误/超时”，未把场均次数伪装成百分比。
-- `/api/docs` 列表与详情的精确 JSON 字段名未在契约中定义；前端按常见 `data: [{name,title,description}]` 与 `{name,title,markdown}` 开发，联调时确认。
+- `cd web && npx tsc --noEmit` 通过；`pnpm --filter web build` 通过（304 KB / gzip 99 KB）。
+- 浏览器实测（ego-browser）：首页、天梯、回放、Agent 主页、我的 Agent（Key 仅一次展示）、脚本详情、团队、文档、开一局→跳转回放均正常。
+- 契约问题已解决：`AgentProfileDTO.stats.moves` 已由 platform 加入并接进前端；`/api/docs` 结构与实现一致。
