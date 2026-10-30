@@ -60,7 +60,9 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
     ...(captureLogs ? { logs: [] } : {}), consecutive: 0, moveMs: 0,
   }]));
   const replay: Replay = {
-    v: 1, engine: ENGINE_VERSION, config: { ...input.config },
+    // Preserve engine-2 replay bytes for explicitly classic matches; new rules
+    // are tagged engine-3 while the replay reader accepts both versions.
+    v: 1, engine: input.config.ruleset === 'classic' ? 'serpent-engine-2' : ENGINE_VERSION, config: { ...input.config },
     players: participants.map((participant) => ({ slot: participant.slot, name: participant.name,
       team: participant.team, color: COLORS[participant.slot]! })),
     moves: [],

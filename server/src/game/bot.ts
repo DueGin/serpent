@@ -13,16 +13,17 @@ function blockedSet(state: GameState, slot: number, coward: boolean): Set<string
   const blocked = new Set<string>();
   for (const snake of state.snakes) {
     if (!snake.alive || (snake.slot !== slot &&
-        (state.mode === 'score' || (state.teams && snake.team === me.team)))) continue;
+        (state.config.ruleset === 'classic' && state.mode === 'score' || (state.teams && snake.team === me.team)))) continue;
     const body = snake.slot === slot ? snake.body.slice(0, -1) : snake.body;
     for (const point of body) blocked.add(pointKey(point));
   }
-  if (coward && state.mode === 'battle') {
+  if ((coward || state.config.ruleset === 'survival-64') && state.mode !== 'solo') {
     for (const snake of state.snakes) {
       if (!snake.alive || snake.slot === slot || (state.teams && snake.team === me.team)) continue;
+      // Avoid immediate head-to-head with an opponent that is at least as long.
       for (const dir of DIRECTIONS) {
         const point = nextCell(snake.body[0]!, dir, state.width, state.height, state.wrap);
-        if (point) blocked.add(pointKey(point));
+        if (point && (!coward || (me.body.length <= snake.body.length))) blocked.add(pointKey(point));
       }
     }
   }
@@ -63,6 +64,12 @@ export function chooseMove(state: GameState, id: string | number, strategy: Buil
     return options[Math.floor(random() * options.length)] ?? snake.dir;
   }
   const blocked = blockedSet(state, snake.slot, strategy === 'coward');
+  if (strategy === 'coward' && snake.hp !== null && snake.hp <= 25) {
+    // BFS already targets food; making the current head a goal naturally prioritizes recovery.
+    const nearest = state.foods.map((food) => Math.abs(food.x - snake.body[0]!.x) + Math.abs(food.y - snake.body[0]!.y))
+      .sort((a, b) => a - b)[0];
+    if (nearest !== undefined && nearest >= snake.hp) return bfsDir(state, snake.slot, blocked) ?? snake.dir;
+  }
   const path = bfsDir(state, snake.slot, blocked);
   if (path) return path;
   return options.find((dir) => {

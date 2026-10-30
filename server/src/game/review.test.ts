@@ -72,12 +72,12 @@ test('counterfactual options use engine deaths and resulting space without mutat
 });
 
 test('score wraps for BFS and options while other living snakes do not block', () => {
-  const settings = config('score');
+  const settings = config('score', { ruleset: 'classic', maxHp: null, wrap: true });
   const game = createGame({ config: settings, participants: players(2), foods: [{ x: 7, y: 3 }] });
   pose(game, 0, [{ x: 0, y: 3 }, { x: 1, y: 3 }, { x: 2, y: 3 }], 'left');
   pose(game, 1, [{ x: 7, y: 3 }, { x: 7, y: 4 }, { x: 7, y: 5 }], 'up');
   assert.deepEqual(reviewMetrics(game, 0), { space: 62, safeMoves: 3, foodDist: 1 });
-  const left = reviewOptions(game, replayFor(['LU'], 'score'), 0).find((option) => option.dir === 'left');
+  const left = reviewOptions(game, replayFor(['LU'], 'score', { ruleset: 'classic', maxHp: null, wrap: true }), 0).find((option) => option.dir === 'left');
   assert.deepEqual(left, { dir: 'left', legal: true, death: null, space: 61, chosen: true });
 });
 

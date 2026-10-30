@@ -49,8 +49,9 @@ function buildBlocked(state) {
     }
     var isYou = you && snake.id === you.id;
     var isMate = state.teams && you && you.team !== null && snake.team === you.team;
-    // score 中别人不构成障碍；组队时队友可穿过。
-    if (!isYou && (state.mode !== 'battle' || isMate)) {
+    // survival-64 的 score 与 battle 都会撞非队友身体；classic score 仍穿墙且互不伤害。
+    var survivalCombat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
+    if (!isYou && (!survivalCombat || isMate)) {
       continue;
     }
     var body = snake.body || [];
@@ -164,7 +165,21 @@ function move(state) {
       continue;
     }
 
+    // 生命值不足以到达最近食物时，先把食物作为硬目标；classic 的 hp 为 null。
+    var lowHpUrgency = state.maxHp !== null && you.hp !== null && you.hp <= 25;
     var hasFoodPath = candidate.foodDistance >= 0;
+    if (lowHpUrgency && hasFoodPath && candidate.foodDistance < you.hp) {
+      candidate.foodPriority = 1;
+    } else {
+      candidate.foodPriority = 0;
+    }
+    var bestFoodPriority = best.foodDistance >= 0 && lowHpUrgency && best.foodDistance < you.hp ? 1 : 0;
+    if (candidate.foodPriority !== bestFoodPriority) {
+      if (candidate.foodPriority > bestFoodPriority) {
+        best = candidate;
+      }
+      continue;
+    }
     var bestHasFoodPath = best.foodDistance >= 0;
     if (hasFoodPath !== bestHasFoodPath) {
       if (hasFoodPath) {

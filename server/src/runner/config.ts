@@ -15,10 +15,10 @@ export function defaultConfig(mode: GameMode, opts: { teams?: boolean; seed?: nu
   const players = mode === 'solo' ? 1 : teams ? 4 : Math.max(2, Math.min(4, opts.players ?? 4));
   return {
     mode, teams,
-    width: mode === 'solo' ? 24 : 28,
-    height: mode === 'solo' ? 16 : 20,
-    wrap: mode === 'score',
-    foodCount: mode === 'solo' ? 1 : Math.max(3, Math.min(4, players)),
+    width: 64,
+    height: 64,
+    wrap: false,
+    foodCount: players * 4,
     maxTicks: opts.maxTicks ?? (mode === 'solo' ? 1500 : mode === 'score' ? 500 : 1000),
     targetScore: null,
     seed: (opts.seed ?? 0) >>> 0,
@@ -26,8 +26,7 @@ export function defaultConfig(mode: GameMode, opts: { teams?: boolean; seed?: nu
     initTimeoutMs: 500,
     memoryLimitMB: 32,
     matchCpuBudgetMs: 30_000,
-    // 脚手架：规则实现（survival-64）落地前仍生成 classic 配置。
-    ruleset: 'classic',
-    maxHp: null,
+    ruleset: 'survival-64',
+    maxHp: 100,
   };
 }

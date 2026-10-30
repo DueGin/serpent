@@ -20,9 +20,9 @@ export async function trend(p: Principal | null, scriptId: number, opts: { mode?
   const limit = opts.limit ?? 50;
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new AppError('VALIDATION_ERROR', '趋势窗口必须为 1 至 200 场');
   // 一个脚本可占多个位置，趋势窗口按对局计数，以最小 slot 的参赛结果代表该局。
-  const conditions = ['mp.script_id=?', "m.status='done'", `mp.slot=(SELECT min(other.slot)
+  const conditions = ['mp.script_id=?', "m.status='done'", `COALESCE(json_extract(m.config_json,'$.ruleset'),'classic')=?`, `mp.slot=(SELECT min(other.slot)
     FROM match_participants other WHERE other.match_id=m.id AND other.script_id=mp.script_id)`];
-  const args: Array<string | number> = [scriptId];
+  const args: Array<string | number> = [scriptId, CURRENT_RULESET];
   if (!owner) conditions.push("m.kind!='test'");
   if (opts.mode !== undefined) { conditions.push('m.mode=?'); args.push(opts.mode); }
   const rows = db.prepare(`SELECT m.id AS matchId,m.kind,m.mode,m.teams,mp.version,
@@ -63,6 +63,5 @@ export async function trend(p: Principal | null, scriptId: number, opts: { mode?
       avgMoveMs: decisions ? sum(row => row.avgMoveMs * row.moves) / decisions : 0,
       maxMoveMs: Math.max(...matches.map(row => row.maxMoveMs)) };
   });
-  // 脚手架：按规则集过滤由规则实现补上，目前只声明当前规则集。
   return { scriptId, scriptName: script.name, mode: opts.mode ?? null, ruleset: CURRENT_RULESET, versions, recent };
 }

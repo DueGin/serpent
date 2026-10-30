@@ -12,6 +12,7 @@ import { activeMatchCount, createInternalMatch, waitPendingMatches, type Interna
 import { validateTeamEntry, validateTeamLineup } from './lineups';
 import { assertRunning, lifecycle, lifecycleActive, startLifecycle, type Lifecycle } from './lifecycle';
 import { waitScriptChecks } from './script-limits';
+import { normalizeConfig } from '../runner/config';
 
 type Row = Record<string, any>;
 const initialMu = 25, initialSigma = 25 / 3;
@@ -208,7 +209,7 @@ async function scheduleMatch(ladder: Row, requestedId?: number, db = getDb()): P
   } else for (const entry of ordered) participants.push(entry.entrant_type === 'script'
     ? { scriptId: entry.script_id, versionId: validScript(entry.script_id, db).active_version_id, ladderEntryId: entry.id }
     : { builtin: entry.builtin, ladderEntryId: entry.id });
-  const config: MatchConfig = { ...JSON.parse(ladder.config_json), seed: randomInt(0x100000000), foodCount: Math.max(3, participants.length) };
+  const config: MatchConfig = { ...normalizeConfig(JSON.parse(ladder.config_json)), seed: randomInt(0x100000000), foodCount: participants.length * 4 };
   for (const e of chosen) busy(db).add(e.id);
   try { return await createInternalMatch({ kind: 'ladder', ladderId: ladder.id, config, participants, wait: true, db }); }
   finally { for (const e of chosen) busy(db).delete(e.id); }
@@ -295,7 +296,7 @@ async function executeBenchmark(entryId: number, db: Database.Database, generati
         if (tokens.get(entryId) !== token || !lifecycleActive(db, generation) || !entryRow(entryId, db).active) return 'cancelled';
       }
       if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return 'cancelled';
-      const config: MatchConfig = { ...JSON.parse(entry.config_json), seed };
+      const config: MatchConfig = { ...normalizeConfig(JSON.parse(entry.config_json)), seed, foodCount: 4 };
       const match = await createInternalMatch({ kind: 'benchmark', ladderId: entry.ladder_id, config,
         participants: [entry.entrant_type === 'script' ? { scriptId: entry.script_id, versionId, ladderEntryId: entry.id } : { builtin: entry.builtin, ladderEntryId: entry.id }], wait: true, db });
       if (match.status !== 'done') throw new AppError('INTERNAL', '基准赛模拟失败');

@@ -97,7 +97,7 @@ class MetricWorkspace {
     this.foods.fill(0);
     for (const other of game.snakes) {
       if (!other.alive || (other.slot !== snake.slot &&
-        (game.mode !== 'battle' || (game.teams && snake.team === other.team)))) continue;
+        (game.config.ruleset === 'classic' && game.mode !== 'battle' || (game.teams && snake.team === other.team)))) continue;
       for (let index = 0; index < other.body.length - 1; index++) {
         const part = other.body[index];
         this.blocked[part.y * this.width + part.x] = 1;
@@ -177,6 +177,17 @@ function emptyStats(): ReviewParticipantStats {
     avgSpace: 0, minSpace: 0, lowSpaceTicks: 0, riskyMoves: 0, avgFoodDist: null, minHp: null, lowHpTicks: 0 };
 }
 
+/**
+ * Survival-64 considers a snake to be starving when it is both low on health
+ * and unable to reach food before its remaining health runs out.  Keep the
+ * classic hunger heuristic below separate so old replays retain their
+ * historical review output.
+ */
+function isStarving(game: GameState, snake: Snake, foodDist: number | null): boolean {
+  if (game.config.ruleset !== 'survival-64' || snake.hp === null) return false;
+  return snake.alive && snake.hp <= 25 && (foodDist === null || foodDist >= snake.hp);
+}
+
 function isRisky(options: ReviewOption[], length: number): boolean {
   const chosen = options.find((option) => option.chosen);
   return Boolean(chosen && (chosen.death !== null || chosen.space < length) &&
@@ -230,6 +241,7 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
   const trapped = new Set<number>();
   const lastFood = new Map<number, number>();
   const starving = new Set<number>();
+  const starvationContext = new Map<number, { hp: number | null; foodDist: number | null; lastFood: number | null }>();
   const slowCounts = new Map<number, number>();
   let previous: GameState | undefined;
   const final = walkReplay(replay, (game) => {
@@ -251,6 +263,12 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
       line.score.push(snake.score); line.length.push(snake.body.length); line.alive.push(snake.alive ? 1 : 0); line.hp.push(snake.hp);
       line.space.push(metrics.space); line.safeMoves.push(metrics.safeMoves); line.foodDist.push(metrics.foodDist);
       line.decision.push(decision); line.moveMs.push(moveMs); line.move.push(applied);
+      if (snake.hp !== null) {
+        stat.minHp = stat.minHp === null ? snake.hp : Math.min(stat.minHp, snake.hp);
+      }
+      if (snake.alive && snake.hp !== null) {
+        if (snake.hp <= 25) stat.lowHpTicks++;
+      }
       const options = snake.alive && applied !== null ? optionsFor(game, replay, index, workspace) : [];
       const tickReview: ReviewTick | null = options.length ? { tick: game.tick, slot: snake.slot, decision, moveMs, applied, options } : null;
       reviewTicks.get(snake.slot)?.push(tickReview);
@@ -281,12 +299,21 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
           if (chosen && safe) moments.push({ tick: game.tick, slot: snake.slot, kind: 'risky_move', severity: 'warn',
             message: `第 ${game.tick} 拍，${snake.name} 选择 ${chosen.dir} 后${chosen.death ? REASONS[chosen.death] : `仅剩 ${chosen.space} 格空间`}；${safe.dir} 可达 ${safe.space} 格，身长 ${snake.body.length}。` });
         }
-        const hungerTicks = game.tick - (lastFood.get(snake.slot) ?? 0);
-        if ((game.mode === 'solo' || game.mode === 'score') && hungerTicks > 2 * (game.width + game.height) && metrics.foodDist !== null) {
-          if (!starving.has(snake.slot)) moments.push({ tick: game.tick, slot: snake.slot, kind: 'starving', severity: 'info',
-            message: `第 ${game.tick} 拍，${snake.name} 已 ${hungerTicks} 拍未吃食物，最近食物距离 ${metrics.foodDist} 步。` });
-          starving.add(snake.slot);
-        } else starving.delete(snake.slot);
+        if (game.config.ruleset === 'survival-64') {
+          const lowHealth = isStarving(game, snake, metrics.foodDist);
+          if (lowHealth) {
+            if (!starving.has(snake.slot)) moments.push({ tick: game.tick, slot: snake.slot, kind: 'starving', severity: 'warn',
+              message: `第 ${game.tick} 拍，${snake.name} 生命值仅 ${snake.hp}，最近食物${metrics.foodDist === null ? '不可达' : `距离 ${metrics.foodDist} 步`}，可能在进食前耗尽。` });
+            starving.add(snake.slot);
+          } else starving.delete(snake.slot);
+        } else {
+          const hungerTicks = game.tick - (lastFood.get(snake.slot) ?? 0);
+          if ((game.mode === 'solo' || game.mode === 'score') && hungerTicks > 2 * (game.width + game.height) && metrics.foodDist !== null) {
+            if (!starving.has(snake.slot)) moments.push({ tick: game.tick, slot: snake.slot, kind: 'starving', severity: 'info',
+              message: `第 ${game.tick} 拍，${snake.name} 已 ${hungerTicks} 拍未吃食物，最近食物距离 ${metrics.foodDist} 步。` });
+            starving.add(snake.slot);
+          } else starving.delete(snake.slot);
+        }
       }
       if (!snake.alive && snake.deathTick === game.tick && !deaths.has(snake.slot) && snake.deathReason) {
         const decisionTick = snake.deathReason === 'disqualified' ? game.tick : game.tick - 1;
@@ -295,6 +322,13 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
           decision: lastDecision, hadSafeAlternative: Boolean(lastDecision?.options.some((option) => !option.chosen && option.legal && option.death === null)),
           trappedSince: lowStarts.get(snake.slot) ?? null, killerSlot: killerFor(previous, snake, replay),
           lastTicks: [] };
+        if (snake.deathReason === 'starve') {
+          starvationContext.set(snake.slot, {
+            hp: line.hp[game.tick] ?? line.hp[game.tick - 1] ?? snake.hp,
+            foodDist: line.foodDist[game.tick - 1] ?? null,
+            lastFood: lastFood.get(snake.slot) ?? null,
+          });
+        }
         for (let tick = Math.max(0, game.tick - 8); tick < game.tick; tick++) {
           death.lastTicks.push({ tick, space: line.space[tick], safeMoves: line.safeMoves[tick], move: line.move[tick] });
         }
@@ -375,6 +409,15 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
     if (death?.trappedSince !== null && death?.trappedSince !== undefined && death.trappedSince < death.tick) {
       const minimum = Math.min(...line.space.slice(death.trappedSince, death.tick));
       advice.push(`从第 ${death.trappedSince} 拍起，${snake.name} 可达空间一直小于身长，最少 ${minimum} 格，被困 ${death.tick - death.trappedSince} 拍后死亡。追食物前先确认吃完后仍有退路。`);
+    }
+    if (death?.reason === 'starve') {
+      const context = starvationContext.get(snake.slot);
+      const hp = context?.hp ?? snake.hp;
+      const food = context?.foodDist;
+      const last = context?.lastFood;
+      const foodText = food === null || food === undefined ? '最近食物不可达' : `最近食物距离 ${food} 步`;
+      const lastText = last === null || last === undefined ? '本局尚未进食' : `上次进食在第 ${last} 拍`;
+      advice.push(`${snake.name} 在第 ${death.tick} 拍生命值耗尽（${hp ?? 0} HP，${foodText}，${lastText}）。建议在生命值降至 25 前规划安全食物路径，必要时优先选择可达食物而非追求更大空间。`);
     }
     const fixes: Record<FailureKind, string> = { timeout: '减少搜索节点并设置计算预算', error: '检查空值和边界，并用 try/catch 处理预期异常', invalid: '确保同步返回 up、down、left、right 四个方向字符串之一', reverse: '过滤 OPPOSITE[you.dir]，避免 180 度掉头' };
     for (const kind of Object.keys(FAILURE_LABELS) as FailureKind[]) {
