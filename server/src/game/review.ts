@@ -263,8 +263,10 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
       line.score.push(snake.score); line.length.push(snake.body.length); line.alive.push(snake.alive ? 1 : 0); line.hp.push(snake.hp);
       line.space.push(metrics.space); line.safeMoves.push(metrics.safeMoves); line.foodDist.push(metrics.foodDist);
       line.decision.push(decision); line.moveMs.push(moveMs); line.move.push(applied);
-      if (snake.alive && snake.hp !== null) {
+      if (snake.hp !== null) {
         stat.minHp = stat.minHp === null ? snake.hp : Math.min(stat.minHp, snake.hp);
+      }
+      if (snake.alive && snake.hp !== null) {
         if (snake.hp <= 25) stat.lowHpTicks++;
       }
       const options = snake.alive && applied !== null ? optionsFor(game, replay, index, workspace) : [];
