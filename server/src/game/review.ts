@@ -184,7 +184,7 @@ function emptyStats(): ReviewParticipantStats {
  * historical review output.
  */
 function isStarving(game: GameState, snake: Snake, foodDist: number | null): boolean {
-  if (game.config.maxHp === null || snake.hp === null) return false;
+  if (game.config.ruleset !== 'survival-64' || snake.hp === null) return false;
   return snake.alive && snake.hp <= 25 && (foodDist === null || foodDist >= snake.hp);
 }
 
@@ -299,7 +299,7 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
           if (chosen && safe) moments.push({ tick: game.tick, slot: snake.slot, kind: 'risky_move', severity: 'warn',
             message: `第 ${game.tick} 拍，${snake.name} 选择 ${chosen.dir} 后${chosen.death ? REASONS[chosen.death] : `仅剩 ${chosen.space} 格空间`}；${safe.dir} 可达 ${safe.space} 格，身长 ${snake.body.length}。` });
         }
-        if (game.config.maxHp !== null) {
+        if (game.config.ruleset === 'survival-64') {
           const lowHealth = isStarving(game, snake, metrics.foodDist);
           if (lowHealth) {
             if (!starving.has(snake.slot)) moments.push({ tick: game.tick, slot: snake.slot, kind: 'starving', severity: 'warn',
