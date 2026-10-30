@@ -40,6 +40,7 @@
 
 `FrameDTO.review` 和 `ReviewDeath.decision` 包含该拍的三个非反向选项：
 
+
 | 字段 | 含义 |
 |---|---|
 | `dir` | 候选方向，按 up、down、left、right 去掉反向后排列 |
@@ -48,7 +49,7 @@
 | `space` | 该一步之后的可达空间；死亡为 0 |
 | `chosen` | 是否为本拍实际执行方向 |
 
-这是一步推演，无法保证后续存活。没有实际下一步或该蛇已经死亡时，`FrameDTO.review` 为 `null`。`killerSlot` 标明撞上的蛇或对撞蛇，`lastTicks` 给出死亡前最多 8 帧的空间、安全方向数、生命值和实际方向。
+这是一步推演，无法保证后续存活。没有实际下一步或该蛇已经死亡时，`FrameDTO.review` 为 `null`。`killerSlot` 标明撞上的蛇或对撞蛇，`lastTicks` 给出死亡前最多 8 帧的空间、安全方向数、生命值和实际方向。`hadSafeAlternative` 表示是否存在另一个合法且推演一步不死亡的方向；`trappedSince` 是死亡前最后一段连续“空间小于身长”的起点。
 
 ## 4. 关键时刻、饥饿与建议
 
