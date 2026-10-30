@@ -162,6 +162,12 @@ Prompt 参数为可选 `mode`、`goal`、`language`（`javascript` 默认或 `py
 
 对局中 Agent 不直接接入，比赛只由平台沙箱执行脚本；MCP 用于提交代码、检测、开赛和赛后回放/复盘，不是逐拍控制协议。Python 使用 Pyodide 的完整 CPython / WebAssembly，`move(state)` 的 state 为普通 dict/list。语言在创建时确定，后续新版本不能更改语言。
 
+`get_rules` 的文本会提示当前部署是否支持 Python。状态来自启动时轻量隔离自检（相同生产参数的最小 Node 进程，不加载 Pyodide），按进程缓存；也可匿名读取 `GET /api/health` 的 `python: { available, reason? }` 或 `GET /api/stats` 的 `pythonAvailable`，不代表并发池实时有空位。
+
+若 `validate_code`、`dry_run`、`create_script`、`update_script` 返回 `isError=true`、`structuredContent.error.code='PYTHON_UNAVAILABLE'`（对应 REST HTTP 503），这是隔离器缺失、命名空间/挂载被拒、用户代码执行前启动失败/握手超时或解释器池满，不是脚本语法/策略错误。不要按 fail 项修改代码；池满稍后重试，部署故障联系管理员。创建与提交不保存空脚本或 invalid 版本；对局出现此故障时整局 `error`，不记失格/成绩。MCP 工具错误按 MCP 标准通过工具结果返回，不将整个 HTTP 传输改成 503。
+
+部署需要 Node.js 22 和完整本地 Pyodide 资源；Linux 安装 bubblewrap 且允许非特权用户命名空间和 `/proc` 挂载，macOS 需 `sandbox-exec`。Docker 需 `seccomp=unconfined`、`apparmor=unconfined`、`systempaths=unconfined` 三项 `security_opt`，具体配置与安全权衡见仓库 `docs/deploy.md`。修复后重启刷新自检缓存，绝不能降级为无隔离执行。
+
 Python 工具参数示例（由 MCP 客户端调用，不要跳过初始化直接 POST 这些对象）：
 
 ```json
@@ -261,6 +267,7 @@ Python 工具参数示例（由 MCP 客户端调用，不要跳过初始化直�
 - **客户端看不到工具**：检查配置作用域、工作区信任和服务状态；Kimi 在添加服务器后需新会话。
 - **工具调用参数失败**：重新读取该工具的 input schema，不要根据其他工具猜字段。
 - **脚本无效**：先看检测报告 fail 项，再用 `dry_run` 检查；实战问题用 `review_match` 和 `get_match_frame` 定位，用 `get_script_trend` 对比版本，不要跳过检测直接入榜。
+- **PYTHON_UNAVAILABLE**：不是用户代码错误；池满时稍后重试，其他情况请管理员检查 bubblewrap/命名空间/容器权限与本地运行资源。JavaScript 不受此状态影响。
 - **Key 丢失**：由人类所有者在网页或 REST 轮换；旧明文无法再次读取。
 
 ## 10. 配置语法查证依据

@@ -1,7 +1,7 @@
 import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from 'express';
 import { ZodError, type ZodType } from 'zod';
 
-const statuses = { UNAUTHORIZED: 401, FORBIDDEN: 403, NOT_FOUND: 404, VALIDATION_ERROR: 422, CONFLICT: 409, LIMIT_EXCEEDED: 409, RATE_LIMITED: 429, INTERNAL: 500 } as const;
+const statuses = { UNAUTHORIZED: 401, FORBIDDEN: 403, NOT_FOUND: 404, VALIDATION_ERROR: 422, CONFLICT: 409, LIMIT_EXCEEDED: 409, RATE_LIMITED: 429, PYTHON_UNAVAILABLE: 503, INTERNAL: 500 } as const;
 export type ErrorCode = keyof typeof statuses;
 export class AppError extends Error {
   readonly status: number;
@@ -13,6 +13,9 @@ export class AppError extends Error {
 }
 export function runnerError(error: unknown): AppError | undefined {
   if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+  if (error.code === 'PYTHON_UNAVAILABLE') {
+    return new AppError('PYTHON_UNAVAILABLE', error instanceof Error ? error.message : '当前部署未启用 Python 沙箱，请联系管理员');
+  }
   if (error.code === 'RUNNER_BUSY' || error.code === 'RUNNER_UNAVAILABLE') {
     return new AppError('RATE_LIMITED', '模拟任务池繁忙或暂不可用，请稍后重试');
   }

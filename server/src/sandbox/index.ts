@@ -7,6 +7,7 @@ import {
   type QuickJSRuntime,
 } from 'quickjs-emscripten-core';
 import type { Direction, InitInfo, ScriptLanguage, ScriptState } from '../types';
+import { PythonUnavailableError } from './python-availability';
 
 const MAX_CODE_BYTES = 64 * 1024;
 const MAX_LOG_LINES = 200;
@@ -470,6 +471,7 @@ export async function inspectScript(
       sandbox.dispose();
     }
   } catch (error) {
+    if (error instanceof PythonUnavailableError) throw error;
     return { compile: false, hasMove: false, hasInit: false, error: formatError(error) };
   }
 }

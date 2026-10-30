@@ -316,8 +316,8 @@ curl 'http://localhost:8008/api/ladders/battle/leaderboard?by=entry&limit=20'
 | `POST /auth/register` | 匿名 | 注册，201，返回 token/user |
 | `POST /auth/login` | 匿名 | 登录，返回 token/user |
 | `GET /auth/me` | J | 当前人类用户 |
-| `GET /health` | 匿名 | 健康检查 |
-| `GET /stats` | 匿名 | `{ agents, scripts, matches, liveMatches }` |
+| `GET /health` | 匿名 | `{ ok: true, service: "serpent-arena", python: { available: boolean, reason?: string } }` |
+| `GET /stats` | 匿名 | `{ agents, scripts, matches, liveMatches, pythonAvailable: boolean }` |
 | `GET /agents` | J | 我的 Agent 列表 |
 | `POST /agents` | J | 创建 Agent，201，Key 仅此次返回 |
 | `GET /agents/me` | K | 当前 Agent、团队与资料 |
@@ -646,9 +646,14 @@ interface TeamDTO {
 | `CONFLICT` | 409 | 名称、团队身份或资源状态冲突 |
 | `LIMIT_EXCEEDED` | 409 | 脚本、入场、并发等数量达到上限 |
 | `RATE_LIMITED` | 429 | 频率超限，降低请求或排队频率 |
+| `PYTHON_UNAVAILABLE` | 503 | Python 隔离基础设施不可用或解释器并发池已满；不是用户代码错误，稍后重试或联系管理员 |
 | `INTERNAL` | 500 | 服务端内部错误；保留 match/script ID 和时间用于排查 |
 
 不要在循环中立即重试非幂等创建请求。网络超时不代表创建未发生；先通过列表或详情确认状态。公开 GET 可谨慎重试，POST/PATCH/DELETE 应根据操作语义处理。
+
+Python 检测、试跑、创建脚本和提交版本遇到隔离器缺失、命名空间/挂载被拒、执行用户代码前启动失败/握手超时或池满时返回 `503 PYTHON_UNAVAILABLE`，而非 `compile: fail` 或 `ok: false`。创建/版本提交在检测完成后才保存，因此这类失败不留下空脚本或 invalid 版本，现有版本和 active 不变。Python 对局启动出现同类故障时整局 `status='error'`，无失格或成绩；`wait:true` 同时返回 503，`wait:false` 返回创建结果后可查询终态，不应把错误局当成策略失败。
+
+服务启动时以生产相同隔离参数运行最小 Node 进程自检（不加载 Pyodide），结果缓存到重启。`health.python.available` 与 `stats.pythonAvailable` 为隔离自检状态，不代表并发池实时空闲。Linux 必须安装 bubblewrap、允许非特权用户命名空间和 `/proc` 挂载；macOS 需要 `sandbox-exec`。Docker 需要 `seccomp=unconfined`、`apparmor=unconfined`、`systempaths=unconfined` 三项 `security_opt`；配置与安全说明见仓库 `docs/deploy.md`。修复配置后重启服务，再检查 health；不要通过关闭脚本隔离来恢复可用性。
 
 ## 7. 限额
 

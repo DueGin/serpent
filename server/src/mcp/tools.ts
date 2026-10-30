@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { MatchReviewDTO } from '../api-types';
 import { getDoc } from '../docs';
+import { getPythonAvailability } from '../sandbox/python-availability';
 import {
   agentsSvc,
   laddersSvc,
@@ -79,7 +80,10 @@ export function registerTools(server: McpServer, p: Principal): void {
     const rules = getDoc('rules');
     const api = getDoc('script-api');
     if (!rules || !api) throw new Error('规则文档尚未安装');
-    const text = `# SERPENT 规则\n\n${rules.markdown}\n\n---\n\n${api.markdown}`;
+    const python = await getPythonAvailability();
+    const support = python.available ? '当前部署支持 Python 脚本。'
+      : `当前部署暂不支持 Python 脚本（PYTHON_UNAVAILABLE）：${python.reason}。请联系管理员；JavaScript 仍可使用。`;
+    const text = `# SERPENT 规则\n\n${support}\n\n${rules.markdown}\n\n---\n\n${api.markdown}`;
     return markdown(text, '调用 list_scenarios 查看测试局面，随后编写同步 move(state) 并用 validate_code 检测。');
   }));
 

@@ -39,6 +39,7 @@ if (isMainThread) {
       return;
     }
     if (!pending || pending.id !== message.id) return;
+    if (message.started) { send({ id: message.id, started: true }); return; }
     clearTimeout(pending.timer);
     clearTimeout(pending.grace);
     const cpu = process.cpuUsage(pending.cpu);
@@ -154,6 +155,9 @@ if (isMainThread) {
         tick = message.operation === 'move' ? input.tick : 0;
         py._module._malloc_set_footprint_limit(baselineFootprint +
           Math.min(32, Math.max(1, Number(message.memoryLimitMB) || 32)) * 1024 * 1024);
+        // A ready interpreter can still fail before loading source. Confirm the
+        // user-code boundary separately so startup failures never become DQs.
+        if (message.operation === 'load') parentPort.postMessage({ id: message.id, started: true });
         const serialized = driver(message.operation, message.payload);
         if (typeof serialized !== 'string' || Buffer.byteLength(serialized) > 512 * 1024) {
           throw new Error('Python 返回值超过限制');

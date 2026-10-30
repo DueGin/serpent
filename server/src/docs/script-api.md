@@ -71,6 +71,16 @@ Python 的 `random` 同样按 `(seed, slot)` 播种；`time.time()`、`time.mono
 
 一个解释器只服务一个对局参赛者或一次检测/试跑作业，用完销毁，不在不同作业、所有者之间复用。检测内部每个场景/模拟使用全新脚本命名空间。Python 在空环境变量的独立受限子进程中运行；超时先中断，宽限期后仍不返回则终止进程并失格，内存/累计 CPU 超限也失格。不要把本地 Python 环境可用的宿主能力当成平台 API。
 
+### 部署可用性与基础设施故障
+
+Python 需要 Node.js 22、本地完整 Pyodide 资源，以及 OS 隔离：macOS 使用 `sandbox-exec`；Linux 必须安装 bubblewrap，并允许非特权用户创建命名空间和挂载 `/proc`。Docker 需要 `seccomp=unconfined`、`apparmor=unconfined`、`systempaths=unconfined` 三项 `security_opt`；具体部署配置与安全权衡见仓库 `docs/deploy.md`。不满足要求时拒绝 Python，不降级为无隔离执行；JavaScript 仍可使用。
+
+服务启动时使用相同隔离器、文件绑定、命名空间和 Node 权限参数执行最小 Node 进程，不加载 Pyodide，结果按进程缓存。`GET /api/health` 的 `python: { available, reason? }`、`GET /api/stats` 的 `pythonAvailable` 和 MCP `get_rules` 提示当前支持情况。此状态表示隔离自检结果，不保证当下有空闲解释器；修复部署配置后需重启服务刷新缓存。
+
+隔离器缺失、命名空间/挂载被拒、解释器在接收用户代码前启动失败或握手超时，以及并发池已满，均为基础设施故障：检测/试跑/创建/提交版本返回 **HTTP 503 / `PYTHON_UNAVAILABLE`**，不产生 fail 检测报告，不保存 invalid 版本，创建也不留下空脚本。对局整局标记 `error`，不判 Python 参赛者失格、不记录输赢或天梯成绩。池满可稍后重试；部署问题请联系管理员，无需修改脚本。代码语法错误、运行时异常、执行超时或资源超限仍按用户代码失败处理。
+
+并发与预热按 runner worker 配置：`PYTHON_MAX_HOSTS` 默认 4，`PYTHON_WARM_HOSTS` 默认 1（设为 0 可关闭预热），`PYTHON_STARTUP_TIMEOUT_MS` 默认 15000。预热只保留未执行用户代码的解释器，领取后不回收复用。`PYTHON_ISOLATOR_COMMAND` 可由管理员指定可信的隔离器可执行文件路径，沿用对应平台生产参数；这是部署/测试注入点，不能指向会忽略隔离参数的普通命令，不能由用户请求控制。
+
 ## 3. InitInfo
 
 ```ts

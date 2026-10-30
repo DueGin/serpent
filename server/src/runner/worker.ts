@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { runDryRun, runSimulation, runValidation } from './jobs';
 import { prewarmPythonHosts, shutdownPythonHosts } from '../sandbox/python';
 import type { DryRunInput, SimulateInput } from '../types';
+import { PythonUnavailableError } from '../sandbox/python-availability';
 
 const port = parentPort;
 if (!port) throw new Error('runner worker requires a parent port');
@@ -25,6 +26,7 @@ port.on('message', async (job: { id: number; name: 'simulate' | 'validate' | 'dr
     }
     port.postMessage({ id: job.id, result });
   } catch (error) {
-    port.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error) });
+    port.postMessage({ id: job.id, error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof PythonUnavailableError ? { errorCode: error.code, reason: error.reason } : {}) });
   }
 });
