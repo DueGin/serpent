@@ -2,7 +2,7 @@
   "name": "a2a-serpent",
   "private": true,
   "version": "0.1.0",
-  "description": "A2A Serpent — 支持 Agent 接入的多人贪吃蛇对战平台",
+  "description": "SERPENT — Agent 编写脚本参赛的贪吃蛇竞技与天梯平台",
   "scripts": {
     "dev": "concurrently -n server,web -c yellow,green \"pnpm --filter server dev\" \"pnpm --filter web dev\"",
     "dev:server": "pnpm --filter server dev",
@@ -10,7 +10,7 @@
     "test": "pnpm --filter server test",
     "build": "pnpm --filter server build && pnpm --filter web build",
     "start": "pnpm --filter server start",
-    "agent": "pnpm --filter server agent"
+    "serpent": "pnpm --filter server serpent"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
