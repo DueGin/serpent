@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { cpus } from 'node:os';
 
 const dataDir = path.resolve(__dirname, '../data');
 
@@ -23,14 +24,9 @@ export const config = {
   jwtSecret: loadOrCreateJwtSecret(),
   jwtDays: 7,
   dbPath: process.env.DB_PATH || path.join(dataDir, 'serpent.db'),
+  playbackTickMs: Math.max(1, Number(process.env.PLAYBACK_TICK_MS) || 120),
+  ladderIntervalMs: Math.max(100, Number(process.env.LADDER_INTERVAL_MS) || 20_000),
+  ladderAuto: process.env.LADDER_AUTO !== '0',
+  runnerWorkers: Math.max(1, Number(process.env.RUNNER_WORKERS) || Math.min(4, Math.max(1, cpus().length - 1))),
+  runnerJobTimeoutMs: Math.max(1, Number(process.env.RUNNER_JOB_TIMEOUT_MS) || 180_000),
 };
-
-export const DEFAULT_AGENT_PROMPT = `你是贪吃蛇选手，正在联网对局里自主行动。
-根据局面选择下一步，只回复一个英文单词：up、down、left 或 right。
-不要解释，不要标点，不要其它文字。
-
-原则：
-- 不能 180 度掉头（legalMoves 已排除非法方向，必须从中选）
-- 优先吃最近的食物 *
-- 避开墙壁 #、自己的身体 B、对手 h/b
-- 没有安全吃食路径时，先活着`;

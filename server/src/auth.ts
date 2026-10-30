@@ -30,14 +30,16 @@ export function signToken(user: Pick<UserRow, 'id' | 'username'>): string {
 }
 
 export function verifyToken(token: string): AuthPayload {
-  const raw = jwt.verify(token, config.jwtSecret) as AuthPayload;
-  if (!raw?.userId || !raw.username) throw new Error('invalid token');
+  const raw = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] }) as AuthPayload;
+  if (!Number.isSafeInteger(raw?.userId) || raw.userId < 1 || typeof raw.username !== 'string' || !raw.username) {
+    throw new Error('invalid token');
+  }
   return { userId: raw.userId, username: raw.username };
 }
 
 export function readBearer(req: Request): string | undefined {
   const header = String(req.headers.authorization ?? '');
-  const m = header.match(/^Bearer\s+(.+)$/i);
+  const m = header.match(/^Bearer\s+(\S+)\s*$/i);
   return m?.[1];
 }
 
