@@ -324,7 +324,7 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
           starvationContext.set(snake.slot, {
             hp: line.hp[game.tick] ?? line.hp[game.tick - 1] ?? snake.hp,
             foodDist: line.foodDist[game.tick - 1] ?? null,
-            lastFood: lastFood.has(snake.slot) ? lastFood.get(snake.slot)! : null,
+            lastFood: lastFood.get(snake.slot) ?? null,
           });
         }
         for (let tick = Math.max(0, game.tick - 8); tick < game.tick; tick++) {

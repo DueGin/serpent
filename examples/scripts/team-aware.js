@@ -7,6 +7,7 @@ var DELTAS = [
   { x: -1, y: 0 }
 ];
 var OPPOSITE = { up: 'down', down: 'up', left: 'right', right: 'left' };
+var MAX_ANALYSIS_CELLS = 1024;
 
 function pointIndex(x, y, width) {
   return y * width + x;
@@ -101,6 +102,7 @@ function buildFoodMap(state) {
 
 function distanceMapFrom(start, state, blocked) {
   var total = state.width * state.height;
+  var limit = state.width >= 64 ? MAX_ANALYSIS_CELLS : total;
   var distance = new Array(total);
   var queue = new Array(total);
   for (var i = 0; i < total; i += 1) {
@@ -131,6 +133,9 @@ function distanceMapFrom(start, state, blocked) {
       distance[nextIndex] = distance[current] + 1;
       queue[tail] = nextIndex;
       tail += 1;
+      if (tail >= limit) {
+        break;
+      }
     }
   }
   return distance;
@@ -162,6 +167,7 @@ function buildSnakeMaps(state, blocked, wantMates) {
 
 function analyzeSpace(start, state, blocked, foodMap, enemyMaps) {
   var total = state.width * state.height;
+  var limit = state.width >= 64 ? MAX_ANALYSIS_CELLS : total;
   var distance = new Array(total);
   var queue = new Array(total);
   for (var i = 0; i < total; i += 1) {
@@ -221,6 +227,9 @@ function analyzeSpace(start, state, blocked, foodMap, enemyMaps) {
       distance[nextIndex] = distance[current] + 1;
       queue[tail] = nextIndex;
       tail += 1;
+      if (tail >= limit) {
+        break;
+      }
     }
 
     if (exits <= 1) {

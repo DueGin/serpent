@@ -7,6 +7,9 @@ var DELTAS = [
   { x: -1, y: 0 }
 ];
 var OPPOSITE = { up: 'down', down: 'up', left: 'right', right: 'left' };
+// Keep per-tick flood work bounded on the 64x64 board; nearby food and exits
+// are enough for the heuristic while preserving the classic behavior.
+var MAX_ANALYSIS_CELLS = 1024;
 
 function pointIndex(x, y, width) {
   return y * width + x;
@@ -98,6 +101,7 @@ function buildFoodMap(state) {
 
 function analyzeSpace(start, state, blocked, foodMap) {
   var total = state.width * state.height;
+  var limit = state.width >= 64 ? MAX_ANALYSIS_CELLS : total;
   var seen = new Array(total);
   var distance = new Array(total);
   var queue = new Array(total);
@@ -147,6 +151,9 @@ function analyzeSpace(start, state, blocked, foodMap) {
       distance[nextIndex] = distance[current] + 1;
       queue[tail] = nextIndex;
       tail += 1;
+      if (tail >= limit) {
+        break;
+      }
     }
 
     if (exits <= 1) {
