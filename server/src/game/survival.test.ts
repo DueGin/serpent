@@ -107,3 +107,37 @@ test('body collisions and kills apply to score as well as battle, while teammate
     assert.equal(a.alive, true); assert.equal(mate.alive, true);
   }
 });
+
+test('a boundary casualty uses its old body this tick, then ceases to block on later ticks', () => {
+  const state = game('score', 3, false, []);
+  const victim = pose(state, 0, [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }], 'right');
+  const wall = pose(state, 1, [{ x: 0, y: 10 }, { x: 10, y: 10 }, { x: 11, y: 10 }], 'left');
+  pose(state, 2, [{ x: 40, y: 40 }, { x: 39, y: 40 }, { x: 38, y: 40 }], 'right');
+  step(state);
+  assert.equal(wall.deathReason, 'wall');
+  assert.equal(victim.deathReason, 'snake');
+  assert.equal(wall.kills, 1);
+  const next = pose(state, 2, [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }], 'right');
+  step(state);
+  assert.equal(next.alive, true);
+  assert.deepEqual(next.body[0], { x: 10, y: 10 });
+});
+
+test('score head contests and same-cell teammates follow survival collision rules', () => {
+  const score = game('score', 2, false, []);
+  const longer = pose(score, 0, line(10, 10, 4, -1), 'right');
+  const shorter = pose(score, 1, line(12, 10, 3, 1), 'left');
+  step(score);
+  assert.equal(longer.alive, true);
+  assert.equal(shorter.deathReason, 'head');
+  assert.equal(longer.kills, 1);
+
+  const team = game('battle', 4, true, []);
+  const a = pose(team, 0, line(10, 10, 3, -1), 'right');
+  const mate = pose(team, 2, [{ x: 11, y: 9 }, { x: 11, y: 8 }, { x: 11, y: 7 }], 'down');
+  pose(team, 1, [{ x: 30, y: 10 }, { x: 31, y: 10 }, { x: 32, y: 10 }], 'left');
+  pose(team, 3, [{ x: 30, y: 30 }, { x: 31, y: 30 }, { x: 32, y: 30 }], 'left');
+  step(team);
+  assert.equal(a.alive, true); assert.equal(mate.alive, true);
+  assert.deepEqual(a.body[0], mate.body[0]);
+});
