@@ -91,3 +91,17 @@ it('enforces the same identity budget through real REST and MCP requests', async
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+it('shares one budget across every Agent owned by the same user (no quota stacking)', async () => {
+  const agentsOfUser: Awaited<ReturnType<typeof agents.create>>[] = [];
+  for (const name of ['stack-one', 'stack-two', 'stack-three']) agentsOfUser.push(await agents.create(p, { name }));
+  assert.equal(agentsOfUser.length, 3);
+  const asAgent = (index: number): Principal => ({ kind: 'agent', userId: p.userId, agentId: agentsOfUser[index]!.id });
+  // 两个名额被两个不同 Agent 的 Key 占住；第三个 Agent 的 Key 和用户 JWT 都不得再拿到名额。
+  const held = [scripts.dryRun(asAgent(0), { code }), scripts.dryRun(asAgent(1), { code })];
+  await assert.rejects(scripts.validate(code, asAgent(2)), limited);
+  await assert.rejects(scripts.validate(code, { kind: 'user', userId: p.userId }), limited);
+  const results = await Promise.all(held);
+  assert.ok(results.every(result => result.ok));
+  assert.equal((await scripts.dryRun(asAgent(2), { code })).ok, true);
+});

@@ -19,7 +19,7 @@ const benchmarkSeeds = [17, 101, 307, 509, 701, 907, 1201, 1601, 2003, 3001];
 const queueTimes = new WeakMap<Database.Database, Map<number, number>>();
 const busyEntries = new WeakMap<Database.Database, Set<number>>();
 const benchmarkTokens = new WeakMap<Database.Database, Map<number, object>>();
-const benchmarkJobs = new WeakMap<Database.Database, Map<number, { versionId: number | undefined; promise: Promise<void> }>>();
+const benchmarkJobs = new WeakMap<Database.Database, Map<number, { versionId: number | undefined; promise: Promise<BenchmarkOutcome> }>>();
 const backgroundJobs = new Set<Promise<unknown>>();
 function track(job: Promise<unknown>): void { backgroundJobs.add(job); void job.catch(() => {}).finally(() => backgroundJobs.delete(job)); }
 export async function waitLadderJobs(): Promise<void> { while (backgroundJobs.size) await Promise.allSettled([...backgroundJobs]); }
@@ -214,7 +214,9 @@ async function scheduleMatch(ladder: Row, requestedId?: number, db = getDb()): P
   finally { for (const e of chosen) busy(db).delete(e.id); }
 }
 export async function queue(p: Principal, slug: string, entryId: number): Promise<DTO.MatchSummaryDTO> {
-  const db = getDb(), ladder = ladderRow(slug), entry = entryRow(entryId);
+  const db = getDb();
+  assertRunning(db);
+  const ladder = ladderRow(slug), entry = entryRow(entryId);
   if (entry.ladder_id !== ladder.id) throw new AppError('NOT_FOUND', '入场记录不属于此天梯');
   authorizeEntry(p, entry);
   if (!eligible(entry, db)) throw new AppError('CONFLICT', '入场者已暂停或阵容不可用');
@@ -223,7 +225,12 @@ export async function queue(p: Principal, slug: string, entryId: number): Promis
   if (previous !== undefined && Date.now() - previous < 15000) throw new AppError('RATE_LIMITED', '手动排队需间隔 15 秒');
   times.set(entryId, Date.now());
   try {
-    if (ladder.kind === 'solo') { await runBenchmark(entryId, db); const row = db.prepare('SELECT match_id FROM match_participants WHERE ladder_entry_id=? ORDER BY match_id DESC LIMIT 1').get(entryId) as Row | undefined; if (!row) throw new AppError('INTERNAL', '基准赛未完成'); const { get: getMatch } = await import('./matches'); return getMatch(p, row.match_id); }
+    if (ladder.kind === 'solo') {
+      // runBenchmark 在关机或版本被替代时会静默返回，必须区分「跑完」和「被取消」，
+      // 否则会把上一局旧结果当成这次排队的结果返回。
+      const outcome = await runBenchmark(entryId, db);
+      if (outcome !== 'completed') throw new AppError('RATE_LIMITED', '基准赛被取消（服务关闭或版本已更新），请稍后重试');
+      const row = db.prepare('SELECT match_id FROM match_participants WHERE ladder_entry_id=? ORDER BY match_id DESC LIMIT 1').get(entryId) as Row | undefined; if (!row) throw new AppError('INTERNAL', '基准赛未完成'); const { get: getMatch } = await import('./matches'); return getMatch(p, row.match_id); }
     return await scheduleMatch(ladder, entryId, db);
   } catch (err) { if (err instanceof AppError && err.code !== 'RATE_LIMITED') times.delete(entryId); throw err; }
 }
@@ -243,30 +250,32 @@ export function scriptVersionChanged(scriptId: number): void {
 function scheduleBenchmark(entryId: number, db: Database.Database): void {
   track(runBenchmark(entryId, db).catch(() => { console.warn(`[serpent] 单人基准赛未完成 entry=${entryId}`); }));
 }
-function runBenchmark(entryId: number, db: Database.Database): Promise<void> {
+type BenchmarkOutcome = 'completed' | 'cancelled';
+function runBenchmark(entryId: number, db: Database.Database): Promise<BenchmarkOutcome> {
   const generation = lifecycle(db);
-  if (!lifecycleActive(db, generation)) return Promise.resolve();
+  if (!lifecycleActive(db, generation)) return Promise.resolve('cancelled');
   const entry = entryRow(entryId, db);
   const versionId = entry.entrant_type === 'script' ? validScript(entry.script_id, db).active_version_id as number : undefined;
   let jobs = benchmarkJobs.get(db);
   if (!jobs) { jobs = new Map(); benchmarkJobs.set(db, jobs); }
   const current = jobs.get(entryId);
-  if (current && current.versionId === versionId) return current.promise;
+  if (current && current.versionId === versionId) return current.promise as Promise<BenchmarkOutcome>;
   // Bound queued entry work as well as submitted matches; a replacement waits
   // for the prior version's currently running simulation to finish.
   if (current) benchmarkTokens.get(db)?.delete(entryId);
-  let promise!: Promise<void>;
-  promise = (async () => {
+  let promise!: Promise<BenchmarkOutcome>;
+  promise = (async (): Promise<BenchmarkOutcome> => {
     await (current?.promise.catch(() => {}) ?? Promise.resolve());
-    if (lifecycleActive(db, generation) && jobs!.get(entryId)?.promise === promise) await executeBenchmark(entryId, db, generation);
+    if (!lifecycleActive(db, generation) || jobs!.get(entryId)?.promise !== promise) return 'cancelled';
+    return executeBenchmark(entryId, db, generation);
   })().finally(() => {
     if (jobs!.get(entryId)?.promise === promise) jobs!.delete(entryId);
   });
   jobs.set(entryId, { versionId, promise });
   return promise;
 }
-async function executeBenchmark(entryId: number, db: Database.Database, generation: Lifecycle): Promise<void> {
-  if (!lifecycleActive(db, generation)) return;
+async function executeBenchmark(entryId: number, db: Database.Database, generation: Lifecycle): Promise<BenchmarkOutcome> {
+  if (!lifecycleActive(db, generation)) return 'cancelled';
   const entry = entryRow(entryId, db);
   if (!entry.active || entry.ladder_kind !== 'solo') throw new AppError('CONFLICT', '单人基准入场不可用');
   let tokens = benchmarkTokens.get(db); if (!tokens) { tokens = new Map(); benchmarkTokens.set(db, tokens); }
@@ -277,28 +286,29 @@ async function executeBenchmark(entryId: number, db: Database.Database, generati
   const results: Array<{ score: number; ticks: number }> = [];
   try {
     for (const seed of benchmarkSeeds) {
-      if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return;
-      if (!entryRow(entryId, db).active) return;
-      if (entry.entrant_type === 'script') { const current = validScript(entry.script_id, db); if (current.active_version_id !== versionId) return; }
+      if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return 'cancelled';
+      if (!entryRow(entryId, db).active) return 'cancelled';
+      if (entry.entrant_type === 'script') { const current = validScript(entry.script_id, db); if (current.active_version_id !== versionId) return 'cancelled'; }
       // Do not turn many solo enrollments into an unbounded worker-pool queue.
       while (activeMatchCount(db) >= runnerCapacity()) {
         await new Promise<void>(resolve => setTimeout(resolve, 25));
-        if (tokens.get(entryId) !== token || !lifecycleActive(db, generation) || !entryRow(entryId, db).active) return;
+        if (tokens.get(entryId) !== token || !lifecycleActive(db, generation) || !entryRow(entryId, db).active) return 'cancelled';
       }
-      if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return;
+      if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return 'cancelled';
       const config: MatchConfig = { ...JSON.parse(entry.config_json), seed };
       const match = await createInternalMatch({ kind: 'benchmark', ladderId: entry.ladder_id, config,
         participants: [entry.entrant_type === 'script' ? { scriptId: entry.script_id, versionId, ladderEntryId: entry.id } : { builtin: entry.builtin, ladderEntryId: entry.id }], wait: true, db });
       if (match.status !== 'done') throw new AppError('INTERNAL', '基准赛模拟失败');
       results.push({ score: match.participants[0].score, ticks: match.ticks });
     }
-    if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return;
+    if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return 'cancelled';
     const current = entryRow(entryId, db);
-    if (!current.active || (versionId !== undefined && current.active_version_id !== versionId)) return;
+    if (!current.active || (versionId !== undefined && current.active_version_id !== versionId)) return 'cancelled';
     const avgScore = results.reduce((n, r) => n + r.score, 0) / results.length;
     db.prepare('UPDATE ladder_entries SET games=games+?,wins=wins+?,avg_score=?,best_score=?,avg_ticks=?,rating=?,last_match_at=?,updated_at=? WHERE id=?')
       .run(results.length, results.length, avgScore, Math.max(...results.map((r) => r.score)), results.reduce((n, r) => n + r.ticks, 0) / results.length, avgScore, Date.now(), Date.now(), entryId);
     arenaEvents.emit('ladder:updated', { slug: entry.slug });
+    return 'completed';
   } finally { if (tokens.get(entryId) === token) tokens.delete(entryId); }
 }
 export async function recordMatchResult(matchId: number, db = getDb()): Promise<void> {

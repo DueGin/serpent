@@ -25,7 +25,9 @@ export async function checkedScriptCall<T>(db: Database.Database, p: Principal |
     usage.starts = usage.starts.filter(time => now - time < SCRIPT_CHECK_LIMITS.windowMs);
     if (!usage.active && !usage.starts.length) identities.delete(key);
   }
-  const key = p.kind === 'agent' ? `agent:${p.agentId}` : `user:${p.userId}`;
+  // 按归属用户计额度：Agent Key 与 JWT、以及同一用户名下多个 Agent 共用同一份，
+  // 否则多建几个 Agent 就能成倍放大额度、挤占全局 runner 队列。
+  const key = `user:${p.userId}`;
   let usage = identities.get(key);
   if (!usage) { usage = { active: 0, starts: [] }; identities.set(key, usage); }
   if (usage.active >= SCRIPT_CHECK_LIMITS.concurrent || usage.starts.length >= SCRIPT_CHECK_LIMITS.requests) {

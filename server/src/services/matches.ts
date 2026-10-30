@@ -176,6 +176,15 @@ function createRecord(db: Db, input: { kind: MatchKind; config: MatchConfig;
         AND created_by_agent_id=? AND status IN ('queued','running')`).get(input.agentId) as { total: number };
       if (active.total >= 2) throw new AppError('LIMIT_EXCEEDED', '每个 Agent 同时最多进行两局测试赛');
     }
+    // 表演赛同样会占用全局 runner 队列，按发起用户限流，避免一个账号刷满队列。
+    if (input.kind === 'exhibition' && input.userId !== undefined) {
+      const quota = db.prepare(`SELECT count(*) AS total FROM matches WHERE kind='exhibition'
+        AND created_by_user_id=? AND created_at>=?`).get(input.userId, Date.now() - 3_600_000) as { total: number };
+      if (quota.total >= 30) throw new AppError('RATE_LIMITED', '每个账号每小时最多创建 30 局表演赛');
+      const active = db.prepare(`SELECT count(*) AS total FROM matches WHERE kind='exhibition'
+        AND created_by_user_id=? AND status IN ('queued','running')`).get(input.userId) as { total: number };
+      if (active.total >= 2) throw new AppError('LIMIT_EXCEEDED', '每个账号同时最多进行两局表演赛');
+    }
     const info = db.prepare(`INSERT INTO matches
       (kind,mode,teams,ladder_id,status,seed,config_json,created_by_user_id,created_by_agent_id,created_at)
       VALUES (?,?,?,?,'queued',?,?,?,?,?)`).run(input.kind, input.config.mode, +input.config.teams,
