@@ -6,10 +6,9 @@ export default defineConfig({
   server: {
     port: 3308,
     proxy: {
-      '/api': { target: 'http://localhost:8008', changeOrigin: true },
-      '/a2a': { target: 'http://localhost:8008', changeOrigin: true },
-      '/.well-known': { target: 'http://localhost:8008', changeOrigin: true },
-      '/socket.io': { target: 'http://localhost:8008', ws: true, changeOrigin: true },
+      '/api': { target: process.env.SERPENT_API || 'http://localhost:8008', changeOrigin: true },
+      '/mcp': { target: process.env.SERPENT_API || 'http://localhost:8008', changeOrigin: true },
+      '/socket.io': { target: process.env.SERPENT_API || 'http://localhost:8008', ws: true, changeOrigin: true },
     },
   },
 });

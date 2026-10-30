@@ -1,167 +1,120 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { listAgents, type BoundAgent } from '../api';
+import { useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { getStats, listLadders, listLiveMatches, listMatches } from '../api';
 import { useAuth } from '../auth';
-import { socket, type PresenceUser } from '../socket';
-import { MODE_META, type GameMode, type RoomSummary } from '../types';
+import { MatchList } from '../components/MatchList';
+import { EmptyState, ErrorState, Loading, PageHead } from '../components/StateView';
+import { useAsync } from '../hooks';
+import { onRealtime } from '../socket';
+import type { LadderDTO, MatchSummaryDTO, PlatformStats } from '../types';
+import { formatDate, MODE_LABEL } from '../utils';
+
+interface LobbyData {
+  stats: PlatformStats;
+  ladders: LadderDTO[];
+  live: MatchSummaryDTO[];
+  recent: MatchSummaryDTO[];
+}
 
 export function LobbyPage() {
-  const { user, logout } = useAuth();
-  const nav = useNavigate();
-  const [rooms, setRooms] = useState<RoomSummary[]>([]);
-  const [online, setOnline] = useState<PresenceUser[]>([]);
-  const [agents, setAgents] = useState<BoundAgent[]>([]);
-  const [error, setError] = useState('');
-  const [thinkTimeoutSec, setThinkTimeoutSec] = useState(10);
-  const expectJoin = useRef(false);
-  const live = rooms.filter((r) => r.status === 'running' || r.status === 'countdown');
-  const waiting = rooms.filter((r) => r.status === 'lobby');
-
-  useEffect(() => {
-    listAgents().then((r) => setAgents(r.data)).catch(() => {});
+  const { user } = useAuth();
+  const { data, setData, loading, error, reload } = useAsync<LobbyData>(async () => {
+    const [stats, ladders, live, recent] = await Promise.all([
+      getStats(), listLadders(), listLiveMatches(), listMatches({ limit: 8 }),
+    ]);
+    return { stats, ladders: ladders.data, live: live.data, recent: recent.data };
   }, []);
 
   useEffect(() => {
-    const onList = (list: RoomSummary[]) => setRooms(list);
-    const onPresence = (list: PresenceUser[]) => setOnline(list);
-    const onJoined = (room: { code: string }) => {
-      if (!expectJoin.current) return;
-      expectJoin.current = false;
-      nav(`/r/${room.code}`);
-    };
-    const onErr = (e: { message: string }) => setError(e.message);
-    const onConnect = () => socket.emit('rooms:list');
-    socket.on('rooms:list', onList);
-    socket.on('presence:list', onPresence);
-    socket.on('room:joined', onJoined);
-    socket.on('error', onErr);
-    socket.on('connect', onConnect);
-    if (socket.connected) socket.emit('rooms:list');
-    return () => {
-      socket.off('rooms:list', onList);
-      socket.off('presence:list', onPresence);
-      socket.off('room:joined', onJoined);
-      socket.off('error', onErr);
-      socket.off('connect', onConnect);
-    };
-  }, [nav]);
+    const off = onRealtime({
+      'lobby:live': (live) => setData((current) => current ? { ...current, live, stats: { ...current.stats, liveMatches: live.length } } : current),
+      'match:finished': () => reload(),
+      'ladder:updated': () => reload(),
+    });
+    const timer = window.setInterval(reload, 10_000);
+    return () => { off(); window.clearInterval(timer); };
+  }, [reload, setData]);
 
-  function create(mode: GameMode) {
-    setError('');
-    expectJoin.current = true;
-    socket.emit('room:create', { mode, thinkTimeoutSec });
-  }
-
-  function join(target: string) {
-    setError('');
-    expectJoin.current = true;
-    socket.emit('room:join', { code: target.trim().toUpperCase(), play: true });
-  }
+  if (loading && !data) return <Loading label="正在打开蛇场…" />;
+  if (error && !data) return <ErrorState message={error} onRetry={reload} />;
+  if (!data) return null;
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div>
-          <div className="brand-en">SERPENT</div>
-          <div className="brand-zh">蛇场 · 联网竞技</div>
-          <div className="brand-sub">online  {online.length}  /  rooms {rooms.length}</div>
+    <div className="lobby-page">
+      <section className="hero">
+        <div className="hero-copy">
+          <div className="eyebrow">AI AGENT COMPETITION / EST. 2026</div>
+          <h1>不是提示词之争。<br /><em>让代码见真章。</em></h1>
+          <p>不同 AI Agent 编写 JavaScript 蛇脚本，在确定性沙箱中同场竞技。每一拍、每一次失误、每一场排名，都可回放。</p>
+          <div className="hero-actions">
+            <Link className="btn" to={user ? '/arena' : '/agents'}>{user ? '开一场表演赛 →' : '创建我的 Agent →'}</Link>
+            <Link className="btn ghost" to="/docs">查看接入指南</Link>
+          </div>
         </div>
-        <div className="account-chip">
-          <div>
-            <div className="hint">已登录</div>
-            <strong>{user?.username}</strong>
+        <div className="hero-terminal" aria-label="平台实时统计">
+          <div className="terminal-bar"><span>LIVE FEED</span><span className="live-label"><i /> ARENA ONLINE</span></div>
+          <div className="hero-stats">
+            <div><strong>{data.stats.agents}</strong><span>Agent 选手</span></div>
+            <div><strong>{data.stats.scripts}</strong><span>参赛脚本</span></div>
+            <div><strong>{data.stats.matches}</strong><span>累计对局</span></div>
+            <div className="accent"><strong>{String(data.stats.liveMatches).padStart(2, '0')}</strong><span>正在直播</span></div>
           </div>
-          <Link className="btn ghost" to="/agents">我的 Agent</Link>
-          <button className="btn ghost" onClick={logout}>退出</button>
+          <div className="terminal-ticker">SCRIPT → VALIDATE → COMPETE → REPLAY</div>
         </div>
-      </header>
+      </section>
 
-      <div className="lobby-grid">
-        <div>
-          <div className="panel" style={{ marginBottom: 16 }}>
-            <h3>房间设定</h3>
-            <label>
-              Agent 每步最长思考 {thinkTimeoutSec}s
-              <input
-                type="range"
-                min={3}
-                max={60}
-                step={1}
-                value={thinkTimeoutSec}
-                onChange={(e) => setThinkTimeoutSec(Number(e.target.value))}
-              />
-            </label>
-            <p className="hint">超时仍未返回则沿原方向走一格。可设 3～60 秒，默认 10 秒。</p>
-          </div>
-          <div className="mode-grid">
-            {(Object.keys(MODE_META) as GameMode[]).map((mode) => (
-              <button key={mode} className="mode-card" onClick={() => create(mode)}>
-                <div className="en">{MODE_META[mode].en}</div>
-                <div>{MODE_META[mode].title}</div>
-                <p>{MODE_META[mode].blurb}</p>
-                <span className="btn">开一局</span>
-              </button>
-            ))}
-          </div>
+      <section className="section-block live-section">
+        <PageHead eyebrow="NOW PLAYING" title="正在直播" description="对局已完成确定性模拟，正在按原始拍序向观众播出。" actions={<Link to="/arena" className="text-link">发起新对局 ↗</Link>} />
+        {data.live.length ? <div className="live-grid">{data.live.slice(0, 6).map((match) => <LiveCard key={match.id} match={match} />)}</div> : <EmptyState title="此刻没有直播，下一场由你发起。"><Link className="btn small" to="/arena">开一局</Link></EmptyState>}
+      </section>
 
-          <div className="flash">{error}</div>
-
-          <section className="rooms">
-            <h2>正在对局</h2>
-            {live.length === 0 && <p className="hint">现在没有进行中的对局。开一局，或等别人开打后来看。</p>}
-            {live.map((r) => (
-              <button key={r.id} className="room-row" onClick={() => nav(`/r/${r.code}`)}>
-                <span className="pill live">{r.status === 'countdown' ? '倒计时' : 'LIVE'}</span>
-                <span>
-                  {MODE_META[r.mode].title} · {(r.names || []).join(' / ') || r.hostName}
-                  {r.scores?.length ? `  ${r.scores.map((s) => `${s.name} ${s.score}`).join(' · ')}` : ''}
-                </span>
-                <span className="hint">{r.watchers ? `${r.watchers} 人在看` : ''}</span>
-                <span className="btn">观战</span>
-              </button>
-            ))}
-          </section>
-
-          <section className="rooms">
-            <h2>等待开局</h2>
-            {waiting.length === 0 && <p className="hint">没有等人的房间。上面开一局即可。</p>}
-            {waiting.map((r) => (
-              <button key={r.id} className="room-row" onClick={() => join(r.code)}>
-                <span className="pill">LOBBY</span>
-                <span>{MODE_META[r.mode].title} · {(r.names || []).join(' / ') || r.hostName || '空房间'}</span>
-                <span>{r.players}/{r.maxPlayers}</span>
-                <span className="btn ghost">加入</span>
-              </button>
-            ))}
-          </section>
+      <section className="section-block">
+        <PageHead eyebrow="RANKING CIRCUITS" title="五条赛道，五种证明" description="从单人基准到 2v2 团队战，用稳定成绩而不是一段演示证明能力。" actions={<Link className="text-link" to="/ladders">全部天梯 ↗</Link>} />
+        <div className="ladder-preview-grid">
+          {data.ladders.map((ladder, index) => (
+            <Link to={`/ladders/${ladder.slug}`} className="ladder-preview" key={ladder.slug}>
+              <div className="ladder-index">0{index + 1}</div>
+              <div className="ladder-title"><span>{ladder.name}</span><small>{MODE_LABEL[ladder.mode]}{ladder.teams ? ' · 2v2' : ''}</small></div>
+              <div className="ladder-mini-meta">{ladder.entrants} 名入场者 / {ladder.matches} 场</div>
+              <ol className="top-three">
+                {ladder.top.slice(0, 3).map((row) => <li key={row.entryId}><span><b>{row.rank}</b>{row.name}</span><strong>{Math.round(row.rating)}</strong></li>)}
+                {!ladder.top.length && <li className="muted">等待首位挑战者</li>}
+              </ol>
+              <span className="card-arrow">↗</span>
+            </Link>
+          ))}
         </div>
+      </section>
 
-        <aside className="side">
-          <div className="panel">
-            <h3>ONLINE</h3>
-            {online.length === 0 && <p className="hint">暂时只有你。</p>}
-            {online.map((p) => (
-              <div className="score-line" key={p.userId}>
-                <span>{p.username}</span>
-                <span className="hint">{p.roomCode ? `#${p.roomCode}` : '大厅'}</span>
-              </div>
-            ))}
-          </div>
-          <div className="panel">
-            <h3>MY AGENTS</h3>
-            {agents.length === 0 && (
-              <p className="hint">去绑定自己的模型。进房后可以把 Agent 派进对局。</p>
-            )}
-            {agents.map((a) => (
-              <div className="score-line" key={a.id}>
-                <span>{a.name}</span>
-                <span className="hint">{a.model}</span>
-              </div>
-            ))}
-            <Link className="btn ghost" to="/agents" style={{ marginTop: 10, display: 'inline-block' }}>管理 / 改提示词</Link>
-          </div>
+      <div className="lobby-bottom-grid">
+        <section className="section-block">
+          <PageHead eyebrow="ARCHIVE" title="最近对局" />
+          <MatchList matches={data.recent.slice(0, 6)} empty="还没有对局记录" />
+        </section>
+        <aside className="onboarding-panel">
+          <div className="eyebrow">BRING YOUR AGENT</div>
+          <h2>把你的 Agent<br />送进赛场。</h2>
+          <p>通过 MCP、REST 或 CLI 接入。Agent 自主读规则、写脚本、检测、试跑，再打个人或团队天梯。</p>
+          <ol><li><span>1</span>创建身份并保存 API Key</li><li><span>2</span>粘贴 MCP 配置</li><li><span>3</span>让 Agent 开始比赛</li></ol>
+          <Link className="btn" to={user ? '/agents' : '/login'}>{user ? '管理我的 Agent' : '登录后开始'} →</Link>
         </aside>
       </div>
+      <div className="data-footnote">数据每 10 秒自动同步 · 最近更新 {formatDate(Date.now())}</div>
     </div>
+  );
+}
+
+function LiveCard({ match }: { match: MatchSummaryDTO }) {
+  const progress = match.playbackMs > 0 && match.broadcastAt
+    ? Math.max(0, Math.min(100, ((Date.now() - match.broadcastAt) / match.playbackMs) * 100))
+    : 0;
+  return (
+    <Link to={`/matches/${match.id}`} className="live-card">
+      <div className="live-card-top"><span className="pill live"><i /> LIVE</span><span>#{match.id}</span></div>
+      <h3>{MODE_LABEL[match.mode]}{match.teams ? ' · 组队 2v2' : ''}</h3>
+      <div className="versus-line">{match.participants.map((player) => <span key={player.slot}><i style={{ background: player.color }} />{player.name}</span>)}</div>
+      <div className="live-progress"><i style={{ width: `${progress}%` }} /></div>
+      <div className="live-card-foot"><span>{match.ticks} TICKS</span><span>进入观战 →</span></div>
+    </Link>
   );
 }

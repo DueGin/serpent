@@ -16,18 +16,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    connectSocket();
     const token = getToken();
     if (!token) {
       setReady(true);
-      return;
+      return () => disconnectSocket();
     }
     me()
-      .then((r) => {
-        setUser(r.user);
-        connectSocket(token);
-      })
+      .then((result) => setUser(result.user))
       .catch(() => setToken(null))
       .finally(() => setReady(true));
+    return () => disconnectSocket();
   }, []);
 
   const value = useMemo<AuthState>(() => ({
@@ -36,12 +35,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession: (token, next) => {
       setToken(token);
       setUser(next);
-      connectSocket(token);
     },
     logout: () => {
       setToken(null);
       setUser(null);
-      disconnectSocket();
     },
   }), [user, ready]);
 

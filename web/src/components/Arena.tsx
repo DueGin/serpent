@@ -1,77 +1,138 @@
-import { useEffect, useRef } from 'react';
-import type { PublicRoom } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import { COLORS } from '../types';
+import type { Frame, MatchConfig, ReplayDTO } from '../types';
 
-export function Arena({ room }: { room: PublicRoom }) {
-  const ref = useRef<HTMLCanvasElement>(null);
+const TEAM_COLORS = ['#e8c547', '#e23d2a'];
+
+export function Arena({ frame, config, players }: { frame: Frame; config: MatchConfig; players: ReplayDTO['players'] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
-    const canvas = ref.current;
+    const container = containerRef.current;
+    if (!container) return;
+    const updateWidth = () => setContainerWidth(container.clientWidth);
+    updateWidth();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateWidth);
+      return () => window.removeEventListener('resize', updateWidth);
+    }
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
     if (!canvas) return;
-    const width = Math.max(room.width, 16);
-    const height = Math.max(room.height, 12);
-    const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 720;
-    const cell = Math.floor(cssW / width);
-    const cssH = cell * height;
-    canvas.width = Math.floor(cssW * dpr);
-    canvas.height = Math.floor(cssH * dpr);
-    canvas.style.height = `${cssH}px`;
+    const columns = Math.max(1, config.width);
+    const rows = Math.max(1, config.height);
+    const cssWidth = Math.max(1, Math.floor(containerWidth || containerRef.current?.clientWidth || 640));
+    const cell = cssWidth / columns;
+    const cssHeight = cell * rows;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round(cssWidth * dpr));
+    canvas.height = Math.max(1, Math.round(cssHeight * dpr));
+    canvas.style.width = '100%';
+    canvas.style.height = `${cssHeight}px`;
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
+    ctx.setTransform(canvas.width / cssWidth, 0, 0, canvas.height / cssHeight, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
     ctx.fillStyle = '#070604';
-    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.fillRect(0, 0, cssWidth, cssHeight);
 
-    ctx.strokeStyle = 'rgba(232,197,71,0.07)';
+    ctx.strokeStyle = 'rgba(232,197,71,0.075)';
     ctx.lineWidth = 1;
-    for (let x = 0; x <= width; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * cell + 0.5, 0);
-      ctx.lineTo(x * cell + 0.5, cssH);
-      ctx.stroke();
+    ctx.beginPath();
+    for (let x = 0; x <= columns; x += 1) {
+      const px = x * cell + 0.5;
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, cssHeight);
     }
-    for (let y = 0; y <= height; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * cell + 0.5);
-      ctx.lineTo(cssW, y * cell + 0.5);
-      ctx.stroke();
+    for (let y = 0; y <= rows; y += 1) {
+      const py = y * cell + 0.5;
+      ctx.moveTo(0, py);
+      ctx.lineTo(cssWidth, py);
+    }
+    ctx.stroke();
+
+    if (!config.wrap) {
+      ctx.strokeStyle = 'rgba(232,197,71,0.42)';
+      ctx.lineWidth = Math.max(1, cell * 0.08);
+      ctx.strokeRect(1, 1, cssWidth - 2, cssHeight - 2);
     }
 
-    const pad = Math.max(1, Math.floor(cell * 0.12));
-    for (const food of room.foods) {
+    const pad = Math.max(0.7, cell * 0.12);
+    for (const food of frame.foods) {
+      const size = Math.max(1, cell - pad * 2);
       ctx.fillStyle = '#e23d2a';
       ctx.shadowColor = '#e23d2a';
-      ctx.shadowBlur = 12;
-      ctx.fillRect(food.x * cell + pad, food.y * cell + pad, cell - pad * 2, cell - pad * 2);
+      ctx.shadowBlur = Math.min(14, cell * 0.65);
+      ctx.fillRect(food.x * cell + pad, food.y * cell + pad, size, size);
       ctx.shadowBlur = 0;
+      ctx.fillStyle = '#f3ead8';
+      const core = Math.max(1, cell * 0.16);
+      ctx.fillRect(food.x * cell + cell / 2 - core / 2, food.y * cell + cell / 2 - core / 2, core, core);
     }
 
-    for (const snake of room.players) {
-      snake.body.forEach((p, i) => {
-        const dead = !snake.alive;
-        ctx.globalAlpha = dead ? 0.35 : 1;
-        ctx.fillStyle = i === 0 ? snake.color : shade(snake.color, dead ? 0.5 : 0.75);
-        const inset = i === 0 ? pad : pad + 1;
-        ctx.fillRect(p.x * cell + inset, p.y * cell + inset, cell - inset * 2, cell - inset * 2);
-        if (i === 0 && snake.alive) {
-          ctx.fillStyle = '#120e0a';
-          const ex = p.x * cell + cell * 0.62;
-          const ey = p.y * cell + cell * 0.35;
-          ctx.fillRect(ex, ey, Math.max(2, cell * 0.12), Math.max(2, cell * 0.12));
+    const playerBySlot = new Map(players.map((player) => [player.slot, player]));
+    for (const snake of frame.snakes) {
+      const player = playerBySlot.get(snake.slot);
+      const color = player?.color || COLORS[snake.slot % COLORS.length] || '#e8c547';
+      const teamColor = config.teams && player?.team != null
+        ? TEAM_COLORS[player.team % TEAM_COLORS.length] || '#f3ead8'
+        : null;
+      ctx.globalAlpha = snake.alive ? 1 : 0.24;
+
+      snake.body.forEach((point, index) => {
+        const head = index === 0;
+        const inset = head ? pad : Math.min(cell * 0.28, pad + 1);
+        const size = Math.max(1, cell - inset * 2);
+        const x = point.x * cell + inset;
+        const y = point.y * cell + inset;
+        ctx.fillStyle = head ? color : shadeColor(color, snake.alive ? 0.76 : 0.55);
+        ctx.fillRect(x, y, size, size);
+
+        if (teamColor) {
+          const stripe = Math.max(1, cell * 0.11);
+          ctx.fillStyle = teamColor;
+          ctx.fillRect(x, y, size, stripe);
+          if (head) {
+            ctx.strokeStyle = teamColor;
+            ctx.lineWidth = Math.max(1.5, cell * 0.1);
+            ctx.strokeRect(point.x * cell + pad / 2, point.y * cell + pad / 2, cell - pad, cell - pad);
+          }
         }
-        ctx.globalAlpha = 1;
-      });
-    }
-  }, [room.tick, room.status, room.foods, room.players, room.width, room.height]);
 
-  return <canvas ref={ref} />;
+        if (head && snake.alive) {
+          ctx.fillStyle = '#120e0a';
+          const eye = Math.max(1.2, cell * 0.13);
+          const eyeY = point.y * cell + cell * 0.34;
+          ctx.fillRect(point.x * cell + cell * 0.6, eyeY, eye, eye);
+        }
+      });
+      ctx.globalAlpha = 1;
+    }
+  }, [frame, config, players, containerWidth]);
+
+  return (
+    <div className="arena-viewport" ref={containerRef}>
+      <canvas ref={canvasRef} role="img" aria-label={`对局第 ${frame.tick} 拍棋盘`}>
+        当前浏览器不支持 Canvas，无法显示对局画面。
+      </canvas>
+    </div>
+  );
 }
 
-function shade(hex: string, amount: number): string {
-  const n = hex.replace('#', '');
-  const r = parseInt(n.slice(0, 2), 16);
-  const g = parseInt(n.slice(2, 4), 16);
-  const b = parseInt(n.slice(4, 6), 16);
+function shadeColor(color: string, amount: number): string {
+  const match = /^#?([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
   return `rgb(${Math.round(r * amount)},${Math.round(g * amount)},${Math.round(b * amount)})`;
 }
