@@ -51,6 +51,8 @@ class PythonHost {
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json' });
     hosts.add(this);
     this.readyTimer = setTimeout(() => this.stop('Python 解释器启动握手超时（尚未执行用户代码）'), positive(process.env.PYTHON_STARTUP_TIMEOUT_MS, 15_000));
+    // A pending startup must not keep the host process alive on its own.
+    this.readyTimer.unref();
     this.child.on('message', (data: unknown) => {
       const parsed = replySchema.safeParse(data);
       if (!parsed.success) { this.stop('Python IPC 返回值无效'); return; }
@@ -132,7 +134,7 @@ export async function prewarmPythonHosts(): Promise<void> {
       // Make the not-yet-used host claimable while it boots, so four participants
       // cannot be crowded out by an unclaimable in-flight prewarm.
       warm.push(host);
-      try { await host.ready; if (warm.includes(host)) host.idle(); }
+      try { await host.ready; if (warm.includes(host) && !stopping) host.idle(); }
       catch { host.stop(); break; }
     }
   } catch { /* Isolation failure must not prevent JavaScript jobs. */ }
