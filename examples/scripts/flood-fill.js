@@ -1,406 +1,161 @@
-// 洪泛策略：真实计算可达空间、食物与出口，并规避头对头和自困。
+// 寻食 BFS + 有界洪泛：每局复用平铺棋盘，避免每拍按格创建对象。
 var DIRECTIONS = ['up', 'right', 'down', 'left'];
-var DELTAS = [
-  { x: 0, y: -1 },
-  { x: 1, y: 0 },
-  { x: 0, y: 1 },
-  { x: -1, y: 0 }
-];
-var OPPOSITE = { up: 'down', down: 'up', left: 'right', right: 'left' };
-// Keep per-tick flood work bounded on the 64x64 board; nearby food and exits
-// are enough for the heuristic while preserving the classic behavior.
-var MAX_ANALYSIS_CELLS = 1024;
+var DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
+var OPPOSITE = [2, 3, 0, 1];
+var board;
 
-function pointIndex(x, y, width) {
-  return y * width + x;
+function prepare(state) {
+  var w = state.width, h = state.height, n = w * h;
+  if (board && board.w === w && board.h === h && board.wrap === state.wrap) return board;
+  var adjacent = new Int32Array(n * 4);
+  for (var cell = 0; cell < n; cell++) {
+    var x = cell % w, y = (cell / w) | 0;
+    for (var d = 0; d < 4; d++) {
+      var nx = x + DX[d], ny = y + DY[d];
+      if (state.wrap) { nx = (nx + w) % w; ny = (ny + h) % h; }
+      adjacent[cell * 4 + d] = nx < 0 || nx >= w || ny < 0 || ny >= h ? -1 : ny * w + nx;
+    }
+  }
+  board = { w: w, h: h, wrap: state.wrap, n: n, adjacent: adjacent,
+    blocked: new Uint8Array(n), food: new Uint8Array(n), danger: new Uint8Array(n),
+    seen: new Uint8Array(n), spaceSeen: new Int32Array(n), stamp: 0,
+    queue: new Int32Array(n), first: new Int8Array(n), distance: new Int16Array(n) };
+  return board;
 }
 
-function samePoint(a, b) {
-  return a && b && a.x === b.x && a.y === b.y;
-}
-
-function normalize(x, y, state) {
-  if (state.wrap) {
-    return {
-      x: (x + state.width) % state.width,
-      y: (y + state.height) % state.height
-    };
-  }
-  if (x < 0 || x >= state.width || y < 0 || y >= state.height) {
-    return null;
-  }
-  return { x: x, y: y };
-}
-
-function nextPoint(head, direction, state) {
-  var index = DIRECTIONS.indexOf(direction);
-  if (index < 0) {
-    return null;
-  }
-  return normalize(head.x + DELTAS[index].x, head.y + DELTAS[index].y, state);
-}
-
-function distanceBetween(a, b, state) {
-  var dx = Math.abs(a.x - b.x);
-  var dy = Math.abs(a.y - b.y);
-  if (state.wrap) {
-    dx = Math.min(dx, state.width - dx);
-    dy = Math.min(dy, state.height - dy);
-  }
-  return dx + dy;
-}
-
-function buildBlocked(state) {
-  var total = state.width * state.height;
-  var blocked = new Array(total);
-  var i;
-  for (i = 0; i < total; i += 1) {
-    blocked[i] = false;
-  }
-
+function fillBoard(state, b) {
+  b.blocked.fill(0); b.food.fill(0); b.danger.fill(0);
+  var you = state.you, combat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
   var snakes = state.snakes || [];
-  var you = state.you;
-  for (i = 0; i < snakes.length; i += 1) {
-    var snake = snakes[i];
-    if (!snake || !snake.alive) {
-      continue;
-    }
-    var isYou = you && snake.id === you.id;
-    var isMate = state.teams && you && you.team !== null && snake.team === you.team;
-    // survival-64 的 score 与 battle 都把非队友身体视为障碍；classic score 可穿墙。
-    var survivalCombat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
-    if (!isYou && (!survivalCombat || isMate)) {
-      continue;
-    }
-    var body = snake.body || [];
-    for (var j = 0; j < body.length; j += 1) {
-      var part = body[j];
-      if (part && part.x >= 0 && part.x < state.width && part.y >= 0 && part.y < state.height) {
-        blocked[pointIndex(part.x, part.y, state.width)] = true;
+  for (var s = 0; s < snakes.length; s++) {
+    var snake = snakes[s];
+    if (!snake || !snake.alive) continue;
+    var own = snake.id === you.id;
+    var mate = state.teams && you.team !== null && snake.team === you.team;
+    if (own || combat && !mate) {
+      var body = snake.body || [];
+      for (var j = 0; j < body.length; j++) {
+        var part = body[j];
+        if (part && part.x >= 0 && part.x < b.w && part.y >= 0 && part.y < b.h)
+          b.blocked[part.y * b.w + part.x] = 1;
       }
     }
-  }
-  return blocked;
-}
-
-function buildFoodMap(state) {
-  var total = state.width * state.height;
-  var foodMap = new Array(total);
-  for (var i = 0; i < total; i += 1) {
-    foodMap[i] = false;
+    if (!combat || own || mate || !snake.head || (snake.length || 0) < (you.length || 0)) continue;
+    var head = snake.head.y * b.w + snake.head.x;
+    for (var d = 0; d < 4; d++) {
+      if (DIRECTIONS[OPPOSITE[d]] === snake.dir) continue;
+      var next = b.adjacent[head * 4 + d];
+      if (next >= 0) b.danger[next] = 1;
+    }
   }
   var foods = state.foods || [];
-  for (i = 0; i < foods.length; i += 1) {
-    var food = foods[i];
-    if (food && food.x >= 0 && food.x < state.width && food.y >= 0 && food.y < state.height) {
-      foodMap[pointIndex(food.x, food.y, state.width)] = true;
-    }
+  for (var f = 0; f < foods.length; f++) {
+    var food = foods[f];
+    if (food && food.x >= 0 && food.x < b.w && food.y >= 0 && food.y < b.h)
+      b.food[food.y * b.w + food.x] = 1;
   }
-  return foodMap;
-}
-
-function analyzeSpace(start, state, blocked, foodMap) {
-  var total = state.width * state.height;
-  var limit = state.width >= 64 ? MAX_ANALYSIS_CELLS : total;
-  var seen = new Array(total);
-  var distance = new Array(total);
-  var queue = new Array(total);
-  for (var i = 0; i < total; i += 1) {
-    seen[i] = false;
-    distance[i] = 0;
-  }
-
-  var startIndex = pointIndex(start.x, start.y, state.width);
-  var head = 0;
-  var tail = 0;
-  var nearestFood = -1;
-  var reachableFoods = 0;
-  var narrowCells = 0;
-  queue[tail] = startIndex;
-  tail += 1;
-  seen[startIndex] = true;
-
-  while (head < tail) {
-    var current = queue[head];
-    head += 1;
-    var x = current % state.width;
-    var y = Math.floor(current / state.width);
-    var exits = 0;
-
-    if (foodMap[current]) {
-      reachableFoods += 1;
-      if (nearestFood < 0) {
-        nearestFood = distance[current];
-      }
-    }
-
-    for (var d = 0; d < DELTAS.length; d += 1) {
-      var next = normalize(x + DELTAS[d].x, y + DELTAS[d].y, state);
-      if (!next) {
-        continue;
-      }
-      var nextIndex = pointIndex(next.x, next.y, state.width);
-      if (blocked[nextIndex]) {
-        continue;
-      }
-      exits += 1;
-      if (seen[nextIndex]) {
-        continue;
-      }
-      seen[nextIndex] = true;
-      distance[nextIndex] = distance[current] + 1;
-      queue[tail] = nextIndex;
-      tail += 1;
-      if (tail >= limit) {
-        break;
-      }
-    }
-
-    if (exits <= 1) {
-      narrowCells += 1;
-    }
-  }
-
-  return {
-    area: tail,
-    nearestFood: nearestFood,
-    reachableFoods: reachableFoods,
-    narrowCells: narrowCells
-  };
-}
-
-function nearestFoodDistance(start, state, blocked, foodMap) {
-  var total = state.width * state.height;
-  var seen = new Uint8Array(total);
-  var queue = [pointIndex(start.x, start.y, state.width)];
-  var head = 0;
-  seen[queue[0]] = 1;
-  for (var distance = 0; head < queue.length; distance += 1) {
-    var levelEnd = queue.length;
-    while (head < levelEnd) {
-      var cell = queue[head++];
-      if (foodMap[cell]) return distance;
-      var x = cell % state.width;
-      var y = Math.floor(cell / state.width);
-      for (var d = 0; d < DELTAS.length; d += 1) {
-        var next = normalize(x + DELTAS[d].x, y + DELTAS[d].y, state);
-        if (!next) continue;
-        var index = pointIndex(next.x, next.y, state.width);
-        if (blocked[index] || seen[index]) continue;
-        seen[index] = 1;
-        queue.push(index);
-      }
-    }
-  }
-  return -1;
-}
-
-function countExits(point, state, blocked) {
-  var count = 0;
-  for (var d = 0; d < DELTAS.length; d += 1) {
-    var next = normalize(point.x + DELTAS[d].x, point.y + DELTAS[d].y, state);
-    if (next && !blocked[pointIndex(next.x, next.y, state.width)]) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-function directionBetween(from, to, state) {
-  for (var d = 0; d < DIRECTIONS.length; d += 1) {
-    var point = nextPoint(from, DIRECTIONS[d], state);
-    if (samePoint(point, to)) {
-      return DIRECTIONS[d];
-    }
-  }
-  return null;
-}
-
-function hasHeadOnRisk(point, state) {
-  var survivalCombat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
-  if (!survivalCombat) {
-    return false;
-  }
-  var snakes = state.snakes || [];
-  var you = state.you;
-  for (var i = 0; i < snakes.length; i += 1) {
-    var snake = snakes[i];
-    if (!snake || !snake.alive || !snake.head || snake.id === you.id) {
-      continue;
-    }
-    var isMate = state.teams && you.team !== null && snake.team === you.team;
-    if (isMate) {
-      continue;
-    }
-    var incoming = directionBetween(snake.head, point, state);
-    // 敌人不能 180° 掉头进入该格时，本拍没有这次头对头风险。
-    // 头对头时，自己更长可以迎头；不短于自己的蛇头应避开。
-    if (incoming && OPPOSITE[snake.dir] !== incoming && (snake.length || 0) >= (you.length || 0)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function ownTailDistance(point, state) {
-  var body = state.you.body || [];
-  if (body.length < 2) {
-    return 0;
-  }
-  var tail = body[body.length - 1];
-  return tail ? distanceBetween(point, tail, state) : 0;
 }
 
 function fallback(state) {
-  var legal = state && state.legalMoves ? state.legalMoves : [];
-  var current = state && state.you && state.you.dir ? state.you.dir : 'up';
-  if (legal.indexOf(current) >= 0) {
-    return current;
-  }
-  return legal.length > 0 ? legal[0] : current;
+  var legal = state && state.legalMoves || [];
+  var current = state && state.you && state.you.dir || 'up';
+  return legal.indexOf(current) >= 0 ? current : legal[0] || current;
 }
 
-function nearestFoodMove(state) {
-  var you = state.you, width = state.width, height = state.height;
-  var blocked = buildBlocked(state), foodMap = buildFoodMap(state);
-  var danger = new Uint8Array(width * height);
-  var enemyHeads = [];
-  for (var s = 0; s < state.snakes.length; s += 1) {
-    var enemy = state.snakes[s];
-    if (enemy.alive && enemy.id !== you.id && enemy.head && !(state.teams && enemy.team === you.team)) enemyHeads.push(enemy.head);
-    if (!enemy.alive || enemy.id === you.id || state.teams && enemy.team === you.team || enemy.length < you.length) continue;
-    for (var d = 0; d < DIRECTIONS.length; d += 1) {
-      if (OPPOSITE[enemy.dir] === DIRECTIONS[d]) continue;
-      var threat = nextPoint(enemy.head, DIRECTIONS[d], state);
-      if (threat) danger[pointIndex(threat.x, threat.y, width)] = 1;
-    }
-  }
-  var start = pointIndex(you.head.x, you.head.y, width);
-  var queue = [start], first = [-1], seen = new Uint8Array(width * height);
-  seen[start] = 1;
-  var best = null, bestCost = Infinity;
-  var distance = new Int16Array(width * height);
-  var maxSteps = 36;
-  for (var i = 0; i < queue.length; i += 1) {
-    var cell = queue[i], x = cell % width, y = Math.floor(cell / width);
-    if (distance[cell] >= maxSteps) break;
-    for (var d = 0; d < DIRECTIONS.length; d += 1) {
-      if (i === 0 && state.legalMoves.indexOf(DIRECTIONS[d]) < 0) continue;
-      var next = normalize(x + DELTAS[d].x, y + DELTAS[d].y, state);
-      if (!next) continue;
-      var index = pointIndex(next.x, next.y, width);
-      if (seen[index] || blocked[index] || i === 0 && danger[index]) continue;
-      var initial = i === 0 ? d : first[i];
-      if (foodMap[index]) {
-        var pressure = 0;
-        for (var e = 0; e < enemyHeads.length; e += 1) {
-          var yours = distance[cell] + 1;
-          var theirs = distanceBetween(next, enemyHeads[e], state);
-          if (theirs <= yours) pressure += 8;
+function findFood(state, b) {
+  b.seen.fill(0);
+  var start = state.you.head.y * b.w + state.you.head.x;
+  var queue = b.queue, first = b.first, distance = b.distance;
+  var head = 0, end = 1, bestCost = Infinity, bestDirection = -1;
+  queue[0] = start; first[0] = -1; distance[start] = 0; b.seen[start] = 1;
+  while (head < end && head < 2400) {
+    var cell = queue[head], nextDistance = distance[cell] + 1;
+    if (distance[cell] >= 100) break;
+    for (var d = 0; d < 4; d++) {
+      if (head === 0 && state.legalMoves.indexOf(DIRECTIONS[d]) < 0) continue;
+      var next = b.adjacent[cell * 4 + d];
+      if (next < 0 || b.seen[next] || b.blocked[next] || head === 0 && b.danger[next]) continue;
+      var initial = head === 0 ? d : first[head];
+      if (b.food[next]) {
+        var cost = nextDistance;
+        var foodX = next % b.w, foodY = (next / b.w) | 0;
+        for (var e = 0; e < state.snakes.length; e++) {
+          var enemy = state.snakes[e];
+          if (!enemy || !enemy.alive || enemy.id === state.you.id || !enemy.head ||
+              state.teams && state.you.team !== null && enemy.team === state.you.team) continue;
+          var dx = Math.abs(enemy.head.x - foodX), dy = Math.abs(enemy.head.y - foodY);
+          if (b.wrap) { dx = Math.min(dx, b.w - dx); dy = Math.min(dy, b.h - dy); }
+          if (dx + dy <= nextDistance) cost += 8;
         }
-        var cost = distance[cell] + 1 + pressure;
-        if (cost < bestCost) { bestCost = cost; best = DIRECTIONS[initial]; }
+        if (state.teams) {
+          for (var m = 0; m < state.snakes.length; m++) {
+            var mate = state.snakes[m];
+            if (!mate || !mate.alive || !mate.head || mate.id === state.you.id || mate.team !== state.you.team) continue;
+            var mx = Math.abs(mate.head.x - foodX), my = Math.abs(mate.head.y - foodY);
+            if (b.wrap) { mx = Math.min(mx, b.w - mx); my = Math.min(my, b.h - my); }
+            if (mx + my < nextDistance || mx + my === nextDistance && mate.slot < state.you.slot) cost += 12;
+          }
+        }
+        if (cost < bestCost) { bestCost = cost; bestDirection = initial; }
       }
-      seen[index] = 1;
-      distance[index] = distance[cell] + 1;
-      queue.push(index); first.push(initial);
+      b.seen[next] = 1;
+      distance[next] = nextDistance;
+      if (end < b.n) { queue[end] = next; first[end] = initial; end++; }
+    }
+    head++;
+  }
+  return bestDirection;
+}
+
+function flood(b, start, tail, ate, limit) {
+  var queue = b.queue, stamp = ++b.stamp, head = 0, end = 1;
+  queue[0] = start; b.spaceSeen[start] = stamp;
+  while (head < end && end < limit) {
+    var cell = queue[head++];
+    for (var d = 0; d < 4; d++) {
+      var next = b.adjacent[cell * 4 + d];
+      if (next < 0 || b.spaceSeen[next] === stamp || b.blocked[next] && !(next === tail && !ate)) continue;
+      b.spaceSeen[next] = stamp;
+      queue[end++] = next;
+      if (end >= limit) break;
     }
   }
-  return best;
+  return end;
 }
 
 function move(state) {
   var you = state && state.you;
-  if (!you || !you.alive || !you.head) {
-    return fallback(state);
+  if (!you || !you.alive || !you.head || !state.legalMoves || !state.legalMoves.length) return fallback(state);
+  var b = prepare(state);
+  fillBoard(state, b);
+  var body = you.body || [], last = body[body.length - 1];
+  var tail = last ? last.y * b.w + last.x : -1;
+  var route = findFood(state, b);
+  if (route >= 0 && state.maxHp !== null && state.width >= 64) return DIRECTIONS[route];
+  var start = you.head.y * b.w + you.head.x;
+  var needed = Math.max(10, (you.length || body.length) + 3);
+  var limit = Math.min(b.n, Math.max(64, needed * 2));
+  var bestScore = -Infinity, bestDirection = -1;
+  for (var d = 0; d < 4; d++) {
+    if (state.legalMoves.indexOf(DIRECTIONS[d]) < 0) continue;
+    var next = b.adjacent[start * 4 + d];
+    if (next < 0 || b.blocked[next]) continue;
+    var area = flood(b, next, tail, b.food[next], limit);
+    var exits = 0;
+    for (var step = 0; step < 4; step++) {
+      var neighbor = b.adjacent[next * 4 + step];
+      if (neighbor >= 0 && (!b.blocked[neighbor] || neighbor === tail && !b.food[next])) exits++;
+    }
+    var score = Math.min(area, needed * 2) * 4 + exits * 60;
+    if (area < needed) score -= (needed - area) * 260;
+    if (exits === 0) score -= 900;
+    if (b.danger[next]) score -= 10000;
+    if (d === route) score += 2200;
+    if (b.food[next]) score += 500;
+    if (DIRECTIONS[d] === you.dir) score += 8;
+    if (score > bestScore) { bestScore = score; bestDirection = d; }
   }
-  var legal = state.legalMoves || [];
-  if (legal.length === 0) {
-    return fallback(state);
-  }
-
-  // On an open 64x64 board, the shortest safe food route dominates broad
-  // space estimates; reserve flood-fill for tactical congestion.
-  if (state.maxHp !== null && state.width >= 64) {
-    var direct = nearestFoodMove(state);
-    if (direct) return direct;
-  }
-
-  var blocked = buildBlocked(state);
-  var foodMap = buildFoodMap(state);
-  var neededSpace = Math.max(10, you.length + 3);
-  var best = null;
-
-  for (var i = 0; i < DIRECTIONS.length; i += 1) {
-    var direction = DIRECTIONS[i];
-    if (legal.indexOf(direction) < 0) {
-      continue;
-    }
-    var next = nextPoint(you.head, direction, state);
-    if (!next) {
-      continue;
-    }
-
-    var nextIndex = pointIndex(next.x, next.y, state.width);
-    var nextBlocked = blocked.slice();
-    var body = you.body || [];
-    var tail = body[body.length - 1];
-    // 本拍不吃食物时己方尾格会腾空；敌人下一步未知，因此仍保守保留其身体。
-    if (!foodMap[nextIndex] && tail) {
-      nextBlocked[pointIndex(tail.x, tail.y, state.width)] = false;
-    }
-    if (nextBlocked[nextIndex]) {
-      continue;
-    }
-
-    var analysis = analyzeSpace(next, state, nextBlocked, foodMap);
-    var exits = countExits(next, state, nextBlocked);
-    var headOnRisk = hasHeadOnRisk(next, state);
-    var foodDistance = nearestFoodDistance(next, state, nextBlocked, foodMap);
-    var lowHpUrgency = state.maxHp !== null && you.hp !== null;
-    var score = 0;
-
-    // 先排除容纳不下身体的区域，安全区域内以有效寻食为主、空间质量为辅。
-    score += Math.min(analysis.area, neededSpace * 3) * 4;
-    if (analysis.area < neededSpace) {
-      score -= (neededSpace - analysis.area) * 240;
-    }
-    score += exits * 100;
-    score -= analysis.narrowCells * 3;
-    if (exits === 0) {
-      score -= 900;
-    }
-
-    if (foodDistance >= 0) {
-      var foodWeight = state.mode === 'score' ? 1.45 : 1;
-      score += (2200 / (foodDistance + 1)) * foodWeight;
-      score += Math.min(analysis.reachableFoods, 4) * 60;
-      if (lowHpUrgency && foodDistance < you.hp) {
-        score += 12000 / (foodDistance + 1);
-      }
-    } else {
-      score -= 1200;
-    }
-
-    var tailDistance = ownTailDistance(next, state);
-    score += Math.max(0, 12 - tailDistance) * 3;
-    if (analysis.area < neededSpace * 2 && tailDistance <= 3) {
-      score += 80;
-    }
-
-    if (headOnRisk) {
-      score -= 10000;
-    }
-    if (direction === you.dir) {
-      score += 8;
-    }
-
-    if (!best || score > best.score) {
-      best = { direction: direction, score: score };
-    }
-  }
-
-  return best ? best.direction : fallback(state);
+  return bestDirection >= 0 ? DIRECTIONS[bestDirection] : fallback(state);
 }
 
 module.exports = { move: move };
