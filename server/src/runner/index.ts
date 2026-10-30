@@ -9,6 +9,7 @@ import type {
 import { defaultConfig, ENGINE_VERSION } from './config';
 import { listScenarios } from './scenarios';
 import { replayFrames, frameState } from './replay';
+import { PythonUnavailableError } from '../sandbox/python-availability';
 
 export { ENGINE_VERSION, defaultConfig, listScenarios, replayFrames, frameState };
 
@@ -178,7 +179,7 @@ export class RunnerPool {
     this.slots.push(slot);
     slot.timer = setTimeout(() => this.failSlot(slot, new Error('runner worker startup timed out')), this.startupTimeoutMs);
     slot.timer.unref();
-    worker.on('message', (message: { type?: string; id?: number; result?: unknown; error?: string }) => {
+    worker.on('message', (message: { type?: string; id?: number; result?: unknown; error?: string; errorCode?: string; reason?: string }) => {
       if (slot.stopping || !message || typeof message !== 'object') return;
       if (message.type === 'runner-ready' && !slot.ready) {
         if (slot.timer) clearTimeout(slot.timer);
@@ -196,7 +197,9 @@ export class RunnerPool {
       slot.job = undefined;
       if (slot.timer) clearTimeout(slot.timer);
       slot.timer = undefined;
-      this.settle(job, message.error ? new Error(message.error) : undefined, message.result);
+      this.settle(job, message.errorCode === 'PYTHON_UNAVAILABLE'
+        ? new PythonUnavailableError(message.reason ?? 'Python 解释器启动失败')
+        : message.error ? new Error(message.error) : undefined, message.result);
       this.pump();
     });
     worker.on('error', (error) => this.failSlot(slot, error));

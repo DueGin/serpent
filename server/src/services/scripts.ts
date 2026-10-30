@@ -101,11 +101,12 @@ function insertVersion(db: Database.Database, scriptId: number, code: string, no
   db.prepare('UPDATE scripts SET latest_version_id=?,updated_at=? WHERE id=?').run(id, Date.now(), scriptId);
   return id;
 }
-async function checkVersion(db: Database.Database, scriptId: number, id: number, code: string, language: ScriptLanguage, activate: boolean): Promise<void> {
+async function checkVersion(db: Database.Database, scriptId: number, id: number, code: string, language: ScriptLanguage, activate: boolean, checkedReport?: CheckReport): Promise<void> {
   let report: CheckReport;
   let admissionError: AppError | undefined;
-  try { report = await runnerCall(() => runner.validateScript(code, language)); }
+  try { report = checkedReport ?? await runnerCall(() => runner.validateScript(code, language)); }
   catch (error) {
+    if (error instanceof AppError && error.code === 'PYTHON_UNAVAILABLE') throw error;
     admissionError = runnerError(error) ?? (error instanceof AppError && error.code === 'RATE_LIMITED' ? error : undefined);
     report = { ok: false, items: [{ id: 'runner', label: '检测服务', status: 'fail', detail: '检测未能完成，请重新提交版本' }], checkedAt: Date.now(), durationMs: 0 };
   }
@@ -130,6 +131,9 @@ export async function create(p: Principal, input: { agentId?: number; name: stri
   const agent = resolveAgent(p, input.agentId), db = getDb();
   assertRunning(db);
   return checkedScriptCall(db, p, async () => {
+    // Python admission can fail independently of the code. Validate before any
+    // writes so an unavailable deployment leaves no script/version to roll back.
+    const report = language === 'python' ? await runnerCall(() => runner.validateScript(input.code, language)) : undefined;
     const { scriptId, versionId } = databaseWrite(() => db.transaction(() => {
       const count = db.prepare('SELECT count(*) AS n FROM scripts WHERE agent_id=? AND archived=0').get(agent.id) as Row;
       if (count.n >= 20) throw new AppError('LIMIT_EXCEEDED', '每个 Agent 最多拥有 20 个未归档脚本');
@@ -139,7 +143,7 @@ export async function create(p: Principal, input: { agentId?: number; name: stri
       const scriptId = Number(res.lastInsertRowid);
       return { scriptId, versionId: insertVersion(db, scriptId, input.code, note) };
     })());
-    await checkVersion(db, scriptId, versionId, input.code, language, true);
+    await checkVersion(db, scriptId, versionId, input.code, language, true, report);
     return get(p, scriptId);
   });
 }
@@ -150,8 +154,13 @@ export async function addVersion(p: Principal, scriptId: number, input: { code: 
   const note = parseInput(noteSchema, input.note ?? '');
   const language = parseInput(languageSchema, row.language ?? 'javascript');
   return checkedScriptCall(db, p, async () => {
-    const versionId = db.transaction(() => { enforceVersionQuota(db, row.agent_id); return insertVersion(db, scriptId, input.code, note); })();
-    await checkVersion(db, scriptId, versionId, input.code, language, input.activate ?? true);
+    const report = language === 'python' ? await runnerCall(() => runner.validateScript(input.code, language)) : undefined;
+    const versionId = db.transaction(() => {
+      requireEditable(p, scriptId);
+      enforceVersionQuota(db, row.agent_id);
+      return insertVersion(db, scriptId, input.code, note);
+    })();
+    await checkVersion(db, scriptId, versionId, input.code, language, input.activate ?? true, report);
     const version = db.prepare('SELECT * FROM script_versions WHERE id=?').get(versionId) as Row;
     return versionDTO(p, row, version);
   });

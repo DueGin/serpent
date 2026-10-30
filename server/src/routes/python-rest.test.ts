@@ -58,6 +58,9 @@ describe('Python scripts REST lifecycle', () => {
   }
 
   it('persists Python language through validation, versions, id-based dry-run, a mixed match and review', async () => {
+    const health = await request('GET', '/health');
+    assert.deepEqual(z.object({ python: z.object({ available: z.boolean(), reason: z.string().optional() }) }).parse(health.body).python,
+      { available: true });
     const created = await request('POST', '/scripts', { name: 'python-rest-snake', code, language: 'python', visibility: 'open' });
     assert.equal(created.status, 201);
     const script = scriptSchema.parse(created.body);
@@ -129,5 +132,17 @@ describe('Python scripts REST lifecycle', () => {
       assert.equal(errorSchema.parse(invalid.body).error.code, 'VALIDATION_ERROR');
     }
     assert.deepEqual(db.prepare('SELECT COUNT(*) AS n FROM scripts').get(), beforeCount);
+  });
+
+  it('still saves genuine Python syntax failures as invalid versions rather than infrastructure errors', async () => {
+    const created = await request('POST', '/scripts', { name: 'python-syntax-error', language: 'python', code: 'def move(:\n    pass' });
+    assert.equal(created.status, 201);
+    const script = scriptSchema.parse(created.body);
+    assert.equal(script.latestStatus, 'invalid');
+    assert.equal(script.activeVersion, null);
+    const versions = z.object({ versions: z.array(z.object({
+      report: z.object({ items: z.array(z.object({ id: z.string(), status: z.string() })) }),
+    })) }).parse(created.body).versions;
+    assert.equal(versions[0]?.report.items.find(item => item.id === 'compile')?.status, 'fail');
   });
 });

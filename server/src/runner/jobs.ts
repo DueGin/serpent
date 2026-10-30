@@ -10,6 +10,7 @@ import { buildInitInfo, buildScriptState } from '../game/observe';
 import { createSandbox, inspectScript, SandboxError, type SandboxCallResult, type Sandbox } from '../sandbox';
 import { defaultConfig, ENGINE_VERSION } from './config';
 import { listScenarios } from './scenarios';
+import { PythonUnavailableError } from '../sandbox/python-availability';
 
 const encode: Record<Direction, string> = { up: 'U', down: 'D', left: 'L', right: 'R' };
 const CHECKS = ['size', 'compile', 'has-move', 'init', 'scenarios', 'trap', 'solo-sim', 'battle-sim', 'perf'] as const;
@@ -114,6 +115,7 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
         if (result.error || result.timeout || result.fatal) { failed(stat, result, 'init'); kill(participant.slot, 'init'); }
         else if (stat.cpuMs > input.config.matchCpuBudgetMs) { firstError(stat, '累计 CPU 预算已耗尽'); kill(participant.slot, 'init'); }
       } catch (error) {
+        if (error instanceof PythonUnavailableError) throw error;
         if (error instanceof SandboxError && error.timeout) stat.timeouts++;
         else stat.errors++;
         if (language !== 'python') stat.cpuMs += cpuClock() - compileStart;
@@ -240,7 +242,10 @@ export async function runDryRun(input: DryRunInput): Promise<DryRunResult> {
     output.legal = Boolean(move.direction && state.legalMoves.includes(move.direction));
     output.ok = !move.error && !move.timeout && !move.fatal && output.legal;
     if (!output.ok) output.error = move.error ?? (move.timeout ? 'move() 超时' : move.fatal ? 'Python 进程失格' : move.direction ? '返回方向不在 legalMoves 中' : 'move() 返回非法方向');
-  } catch (error) { output.error = message(error); }
+  } catch (error) {
+    if (error instanceof PythonUnavailableError) throw error;
+    output.error = message(error);
+  }
   finally { output.logs = sandbox?.drainLogs() ?? []; sandbox?.dispose(); }
   return output;
 }
@@ -278,7 +283,10 @@ export async function runValidation(code: string, language: ScriptLanguage = 'ja
       sandbox = await createSandbox(code, { seed: 1, slot: 0, moveTimeoutMs: 50, initTimeoutMs: 500, memoryLimitMB: 32 }, language);
       const init = await sandbox.init(scenarios[0]!.init);
       if (init.error || init.timeout || init.fatal) initError = init.error ?? (init.timeout ? 'init() 超时' : 'Python 进程失格');
-    } catch (error) { initError = message(error); }
+    } catch (error) {
+      if (error instanceof PythonUnavailableError) throw error;
+      initError = message(error);
+    }
     finally { sandbox?.dispose(); }
   }
   add('init', initError ? 'fail' : 'pass', initError ?? (inspection.hasInit ? undefined : '未定义 init，允许跳过'));

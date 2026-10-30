@@ -232,7 +232,8 @@ describe('match services', { concurrency: false }, () => {
     assert.equal((await matches.list(null, { scriptId: script.scriptId, limit: 1 }))[0]?.id, match.id);
     assert.equal((await matches.list(null, { before: match.id })).length, 0);
     const stats = await matches.platformStats();
-    assert.deepEqual(stats, { agents: 1, scripts: 1, matches: 1, liveMatches: 1 });
+    assert.equal(typeof stats.pythonAvailable, 'boolean');
+    assert.deepEqual(stats, { agents: 1, scripts: 1, matches: 1, liveMatches: 1, pythonAvailable: stats.pythonAvailable });
     db.prepare('UPDATE matches SET broadcast_at=? WHERE id=?').run(Date.now() - match.playbackMs - 1, match.id);
     assert.equal((await matches.live()).length, 0);
     assert.equal((await matches.get(null, match.id)).live, false);

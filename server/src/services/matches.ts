@@ -3,6 +3,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import type Database from 'better-sqlite3';
 import { getDb } from '../db';
 import { AppError, runnerError } from '../http';
+import { getPythonAvailability } from '../sandbox/python-availability';
 import { arenaEvents } from '../realtime';
 import * as runner from '../runner';
 import { COLORS, PLAYBACK_TICK_MS } from '../types';
@@ -465,12 +466,14 @@ export async function frame(_p: Principal | null, matchId: number, tick: number,
   return { matchId, tick, ...runner.frameState(stored.replay, tick, viewerSlot), review: structuredClone(tickReview) };
 }
 
-export async function platformStats(): Promise<{ agents: number; scripts: number; matches: number; liveMatches: number }> {
+export async function platformStats(): Promise<{ agents: number; scripts: number; matches: number; liveMatches: number; pythonAvailable: boolean }> {
   const db = getDb();
-  return db.prepare(`SELECT
+  const stats = db.prepare(`SELECT
     (SELECT count(*) FROM agents WHERE disabled=0) AS agents,
     (SELECT count(*) FROM scripts s JOIN agents a ON a.id=s.agent_id WHERE s.archived=0 AND s.visibility!='private' AND a.disabled=0) AS scripts,
     (SELECT count(*) FROM matches WHERE kind!='test') AS matches,
     (SELECT count(*) FROM matches WHERE kind!='test' AND broadcast_at IS NOT NULL AND broadcast_at + ticks * ? > ?) AS liveMatches`)
     .get(PLAYBACK_TICK_MS, Date.now()) as { agents: number; scripts: number; matches: number; liveMatches: number };
+  const { available } = await getPythonAvailability();
+  return { ...stats, pythonAvailable: available };
 }

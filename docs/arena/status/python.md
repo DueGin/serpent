@@ -108,3 +108,16 @@
 - 最新性能数据来自可信 allocator（已移除 Python tracer），不是存在可关闭 trace 的中间实现；曾复现的 `JsFinder` 桥恢复和 caught-MemoryError/`f_trace=None` 漏洞均有回归。
 - 提交在 `python-scripts` 分支，不 push、不切换 master；提交 hash 见最后回复。状态文件和实现同一交付提交。
 
+## 协调者跟进：基础设施故障分类（2026-10-31）
+
+- 已先读取根 `AGENTS.md`、`RULES-V2.md` 和本记录，`git merge master` 快进至 `ec6cece`（含新规则、前端与 bubblewrap 镜像安装）；依赖通过 `pnpm install --registry=https://registry.npmmirror.com` 检查。此轮只改服务端和文档，未改 web、Dockerfile、compose、CI，也未 push。
+- 新增 `sandbox/python-availability.ts`：`PythonUnavailableError.code='PYTHON_UNAVAILABLE'`；隔离器命令生成与原生产权限参数共用，缺少隔离器/运行资源、命名空间或挂载被拒、用户源码执行前启动失败/握手超时、池满均为基础设施故障。Node/Pyodide 执行用户源码前额外发送 `started` 确认，区分 ready 之后但尚未执行源码的退出；用户语法/运行错误、超时、内存/CPU 限制继续沿用原判罚。
+- 错误类型穿过 inspect、dry-run、validation、simulation 与 runner worker IPC，`http.ts` 映射 HTTP503。REST 返回统一错误体，MCP 返回标准 `isError` 与结构化错误并提示“不是用户代码错误”，CLI 打印错误码和中文消息。Python 创建/提交在检测完成后才写 DB，因此不可用时既无 invalid/pending 版本，也无空脚本，旧 active/latest、时间戳和版本内容均不变。对局复用现有 runner admission 错误处理，整局 error，无排名、失格、回放/遥测、公开广播或积分变动。
+- `createApp()` 触发一次轻量隔离自检：同 bwrap/sandbox-exec 参数运行最小 Node（不加载 Pyodide），10 秒上限、结果缓存；runner worker 在自身预热入口同样缓存自检。`GET /api/health` 增加 `python:{available,reason?}`，stats 增加 `pythonAvailable`，MCP `get_rules` 文本显示支持情况。缓存描述的是隔离自检，不是实时空闲容量或完整 Pyodide 加载保证；部署修复需重启刷新。
+- 测试注入点为仅管理员可配置的 `PYTHON_ISOLATOR_COMMAND`（传入可信可执行文件，仍带平台原生产参数）；`PYTHON_STARTUP_TIMEOUT_MS` 默认15000，可在测试中缩短。新增测试以临时隔离器模拟 `No permissions to create new namespace`、缺失可执行文件、握手前退出/fatal/挂起、ready后源码前退出、并发池满与释放后重试；真实 HTTP/MCP/CLI 断言503/错误码、完整DB快照不变、对局error、天梯积分/场次不变、health缓存与无Pyodide host，且JS仍可用。额外回归确认真实Python语法错仍保存invalid，正常部署health为available。
+- 文档 `script-api.md` / `rest.md` / `mcp.md` 补齐故障语义、健康字段、缓存/重试与Linux bubblewrap/非特权用户命名空间要求，列出Docker三项 `security_opt`（seccomp/apparmor/systempaths=unconfined），具体配置引向协调者维护的 `docs/deploy.md`，本轮未修改部署文件。
+- 首轮全量：267 tests / 21 suites / 267 pass / 0 fail / 0 skipped，154821.785875ms。补 `started` 确认及语法错误回归后全量：269 tests / 21 suites / 269 pass / 0 fail / 0 skipped，163403.588125ms；新增天梯无归因断言单独7项通过。最终完整代码复跑结果在后续追加。
+- `cd server && npx tsc --noEmit`、`pnpm --filter server build`、`git diff --check` 均通过；未构建或改动前端。Linux真实容器安全/逃逸验收沿用协调者报告，本机macOS不冒充完成Linux真实部署复验。
+- 最终270项第一次复跑269通过/1失败：高负载下轻量隔离器进程未能在任意设定的3秒内返回，health正确报不可用但测试期待的具体namespace错误变为超时。将独立隔离自检上限调至10秒，避免启动负载造成永久缓存的假阴性；不改用户源码50/500ms预算，修正后重新全量验证。
+- **最终交付验证**：`pnpm --filter server test` 全部 **270 tests / 21 suites / 270 pass / 0 fail / 0 skipped，170882.107792ms**；`cd server && npx tsc --noEmit`、服务端构建、`git diff --check` 通过。包含14项新增回归（13项基础设施与1项真实语法错误），结束后无Python宿主或模拟隔离器遗留进程。本地提交至 `python-scripts`，不 push。
+

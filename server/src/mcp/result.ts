@@ -32,6 +32,8 @@ function recoveryHint(code: string): string {
       return '归档不用的脚本或退出多余入场，再重试。';
     case 'RATE_LIMITED':
       return '稍后重试，不要并发重复提交相同写操作。';
+    case 'PYTHON_UNAVAILABLE':
+      return '这不是用户代码错误，无需修改脚本。并发池已满时稍后重试；否则联系管理员检查 Python 隔离部署，或暂用 JavaScript。';
     default:
       return '保留本次参数，稍后重试；若持续失败，请检查服务状态。';
   }

@@ -62,7 +62,8 @@ function payloadMessage(payload: unknown): string | null {
   if (typeof payload !== 'object' || payload === null || !('error' in payload)) return null;
   const error = payload.error;
   if (typeof error !== 'object' || error === null || !('message' in error)) return null;
-  return typeof error.message === 'string' ? error.message : null;
+  if (typeof error.message !== 'string') return null;
+  return 'code' in error && typeof error.code === 'string' ? `${error.code}：${error.message}` : error.message;
 }
 
 async function request(route: string, init: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<unknown> {

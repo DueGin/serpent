@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { AppError, asyncRoute } from '../http';
 import { agentsSvc, laddersSvc, matchesSvc, principalFromRequest, scriptsSvc, teamsSvc, type Principal } from '../services';
 import * as schema from './schemas';
+import { getPythonAvailability } from '../sandbox/python-availability';
 
 async function principal(req: Request, kind?: Principal['kind']): Promise<Principal> {
   const p = await principalFromRequest(req);
@@ -18,7 +19,10 @@ function noInput(req: Request): void {
 export function createArenaRouter(): Router {
   const router = Router();
 
-  router.get('/health', asyncRoute((req, res) => { noInput(req); res.json({ ok: true, service: 'serpent-arena' }); }));
+  router.get('/health', asyncRoute(async (req, res) => {
+    noInput(req);
+    res.json({ ok: true, service: 'serpent-arena', python: await getPythonAvailability() });
+  }));
   router.get('/stats', asyncRoute(async (req, res) => {
     noInput(req);
     res.json(await matchesSvc.platformStats());

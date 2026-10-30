@@ -13,8 +13,10 @@ import authRoutes from './routes/auth';
 import { createArenaRouter } from './routes/arena';
 import { shutdownRunner } from './runner';
 import { startMatchmaker } from './services/ladders';
+import { getPythonAvailability } from './sandbox/python-availability';
 
 export function createApp(): express.Express {
+  void getPythonAvailability();
   const app = express();
   app.disable('x-powered-by');
   app.use(cors({ exposedHeaders: ['Mcp-Session-Id', 'Mcp-Protocol-Version'] }));
