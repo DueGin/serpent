@@ -15,7 +15,7 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
       sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
     fi \
  && apt-get update \
- && apt-get install -y --no-install-recommends python3 make g++ \
+ && apt-get install -y --no-install-recommends python3 make g++ bubblewrap \
  && rm -rf /var/lib/apt/lists/*
 RUN npm install -g pnpm@10.30.2
 WORKDIR /app
@@ -33,6 +33,14 @@ RUN --mount=type=cache,id=serpent-pnpm,target=/pnpm/store pnpm install --frozen-
 
 
 FROM ${NODE_IMAGE} AS runtime
+ARG DEBIAN_MIRROR=
+# Python 沙箱在 Linux 上依赖 bubblewrap 为每个解释器建立网络/进程/文件系统隔离；缺失时拒绝运行 Python。
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends bubblewrap \
+ && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     PORT=8008
 WORKDIR /app
