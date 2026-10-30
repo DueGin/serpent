@@ -64,7 +64,9 @@ function buildBlocked(state) {
     }
     var isYou = you && snake.id === you.id;
     var isMate = state.teams && you && you.team !== null && snake.team === you.team;
-    if (!isYou && (state.mode !== 'battle' || isMate)) {
+    // survival-64 的 score 与 battle 都把非队友身体视为障碍；classic score 可穿墙。
+    var survivalCombat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
+    if (!isYou && (!survivalCombat || isMate)) {
       continue;
     }
     var body = snake.body || [];
@@ -182,7 +184,8 @@ function directionBetween(from, to, state) {
 }
 
 function hasHeadOnRisk(point, state) {
-  if (state.mode !== 'battle') {
+  var survivalCombat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
+  if (!survivalCombat) {
     return false;
   }
   var snakes = state.snakes || [];
@@ -198,7 +201,8 @@ function hasHeadOnRisk(point, state) {
     }
     var incoming = directionBetween(snake.head, point, state);
     // 敌人不能 180° 掉头进入该格时，本拍没有这次头对头风险。
-    if (incoming && OPPOSITE[snake.dir] !== incoming) {
+    // 头对头时，自己更长可以迎头；不短于自己的蛇头应避开。
+    if (incoming && OPPOSITE[snake.dir] !== incoming && (snake.length || 0) >= (you.length || 0)) {
       return true;
     }
   }
@@ -263,6 +267,8 @@ function move(state) {
     var analysis = analyzeSpace(next, state, nextBlocked, foodMap);
     var exits = countExits(next, state, nextBlocked);
     var headOnRisk = hasHeadOnRisk(next, state);
+    var foodDistance = analysis.nearestFood;
+    var lowHpUrgency = state.maxHp !== null && you.hp !== null && you.hp <= 25;
     var score = 0;
 
     // 先排除容纳不下身体的区域，安全区域内以有效寻食为主、空间质量为辅。
@@ -280,6 +286,9 @@ function move(state) {
       var foodWeight = state.mode === 'score' ? 1.45 : 1;
       score += (2200 / (analysis.nearestFood + 1)) * foodWeight;
       score += Math.min(analysis.reachableFoods, 4) * 60;
+      if (lowHpUrgency && foodDistance < you.hp) {
+        score += 9000 / (foodDistance + 1);
+      }
     } else {
       score -= 1200;
     }

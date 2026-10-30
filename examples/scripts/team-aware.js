@@ -67,8 +67,9 @@ function buildBlocked(state) {
       continue;
     }
     var isYou = you && snake.id === you.id;
-    // 队友在 battle 中也可穿过；score 中所有其他蛇都不构成障碍。
-    if (!isYou && (state.mode !== 'battle' || isMate(snake, state))) {
+    // survival-64 的 score/battle 都会撞非队友身体；classic score 仍穿墙。
+    var survivalCombat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
+    if (!isYou && (!survivalCombat || isMate(snake, state))) {
       continue;
     }
     var body = snake.body || [];
@@ -147,7 +148,7 @@ function buildSnakeMaps(state, blocked, wantMates) {
     if ((wantMates && !mate) || (!wantMates && mate)) {
       continue;
     }
-    if (!wantMates && state.mode !== 'battle') {
+    if (!wantMates && !(state.mode === 'battle' || (state.mode === 'score' && !state.wrap))) {
       continue;
     }
     maps.push({
@@ -259,7 +260,8 @@ function directionBetween(from, to, state) {
 }
 
 function hasHeadOnRisk(point, state) {
-  if (state.mode !== 'battle') {
+  var survivalCombat = state.mode === 'battle' || (state.mode === 'score' && !state.wrap);
+  if (!survivalCombat) {
     return false;
   }
   var snakes = state.snakes || [];
@@ -269,7 +271,8 @@ function hasHeadOnRisk(point, state) {
       continue;
     }
     var incoming = directionBetween(snake.head, point, state);
-    if (incoming && OPPOSITE[snake.dir] !== incoming) {
+    // 不短于自己的敌方蛇头对撞会获胜；更短的敌方可迎头。
+    if (incoming && OPPOSITE[snake.dir] !== incoming && (snake.length || 0) >= (state.you.length || 0)) {
       return true;
     }
   }
@@ -411,6 +414,9 @@ function move(state) {
       var foodWeight = state.mode === 'score' ? 1.4 : 1;
       score += (500 / (analysis.nearestFood + 1)) * foodWeight;
       score += Math.min(analysis.reachableFoods, 4) * 20;
+      if (state.maxHp !== null && you.hp !== null && you.hp <= 25 && analysis.nearestFood < you.hp) {
+        score += 4000 / (analysis.nearestFood + 1);
+      }
     } else {
       score -= 350;
     }
