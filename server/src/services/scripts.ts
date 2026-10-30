@@ -4,11 +4,11 @@ import { getDb } from '../db';
 import { sha256 } from '../crypto';
 import { AppError, databaseWrite, parseInput, runnerCall, runnerError } from '../http';
 import type * as DTO from '../api-types';
-import type { CheckReport, DryRunResult, InitInfo, ScenarioInfo, ScriptState, ScriptVisibility } from '../types';
+import type { CheckReport, DryRunResult, InitInfo, ScenarioInfo, ScriptLanguage, ScriptState, ScriptVisibility } from '../types';
 import * as runner from '../runner';
 import { mustOwnAgent, ownsAgent, resolveAgent, type Principal } from './principal';
 import { entryDTO, scriptVersionChanged } from './ladders';
-import { checkDryRunOptions } from './script-input';
+import { checkDryRunOptions, languageSchema } from './script-input';
 import { checkedScriptCall } from './script-limits';
 import { assertRunning } from './lifecycle';
 
@@ -101,10 +101,10 @@ function insertVersion(db: Database.Database, scriptId: number, code: string, no
   db.prepare('UPDATE scripts SET latest_version_id=?,updated_at=? WHERE id=?').run(id, Date.now(), scriptId);
   return id;
 }
-async function checkVersion(db: Database.Database, scriptId: number, id: number, code: string, activate: boolean): Promise<void> {
+async function checkVersion(db: Database.Database, scriptId: number, id: number, code: string, language: ScriptLanguage, activate: boolean): Promise<void> {
   let report: CheckReport;
   let admissionError: AppError | undefined;
-  try { report = await runnerCall(() => runner.validateScript(code)); }
+  try { report = await runnerCall(() => runner.validateScript(code, language)); }
   catch (error) {
     admissionError = runnerError(error) ?? (error instanceof AppError && error.code === 'RATE_LIMITED' ? error : undefined);
     report = { ok: false, items: [{ id: 'runner', label: '检测服务', status: 'fail', detail: '检测未能完成，请重新提交版本' }], checkedAt: Date.now(), durationMs: 0 };
@@ -122,9 +122,10 @@ async function checkVersion(db: Database.Database, scriptId: number, id: number,
   if (changed && getDb() === db) scriptVersionChanged(scriptId);
   if (admissionError) throw admissionError;
 }
-export async function create(p: Principal, input: { agentId?: number; name: string; description?: string; visibility?: ScriptVisibility; code: string; note?: string }): Promise<DTO.ScriptDetailDTO> {
+export async function create(p: Principal, input: { agentId?: number; name: string; description?: string; visibility?: ScriptVisibility; language?: ScriptLanguage; code: string; note?: string }): Promise<DTO.ScriptDetailDTO> {
   const name = parseInput(nameSchema, input.name), description = parseInput(textSchema, input.description ?? ''), note = parseInput(noteSchema, input.note ?? '');
   const visibility = parseInput(visibilitySchema, input.visibility ?? 'listed');
+  const language = parseInput(languageSchema, input.language ?? 'javascript');
   checkCode(input.code);
   const agent = resolveAgent(p, input.agentId), db = getDb();
   assertRunning(db);
@@ -134,11 +135,11 @@ export async function create(p: Principal, input: { agentId?: number; name: stri
       if (count.n >= 20) throw new AppError('LIMIT_EXCEEDED', '每个 Agent 最多拥有 20 个未归档脚本');
       enforceVersionQuota(db, agent.id);
       const now = Date.now();
-      const res = db.prepare('INSERT INTO scripts(agent_id,name,description,visibility,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(agent.id, name, description, visibility, now, now);
+      const res = db.prepare('INSERT INTO scripts(agent_id,name,description,visibility,language,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(agent.id, name, description, visibility, language, now, now);
       const scriptId = Number(res.lastInsertRowid);
       return { scriptId, versionId: insertVersion(db, scriptId, input.code, note) };
     })());
-    await checkVersion(db, scriptId, versionId, input.code, true);
+    await checkVersion(db, scriptId, versionId, input.code, language, true);
     return get(p, scriptId);
   });
 }
@@ -147,9 +148,10 @@ export async function addVersion(p: Principal, scriptId: number, input: { code: 
   assertRunning(db);
   checkCode(input.code);
   const note = parseInput(noteSchema, input.note ?? '');
+  const language = parseInput(languageSchema, row.language ?? 'javascript');
   return checkedScriptCall(db, p, async () => {
     const versionId = db.transaction(() => { enforceVersionQuota(db, row.agent_id); return insertVersion(db, scriptId, input.code, note); })();
-    await checkVersion(db, scriptId, versionId, input.code, input.activate ?? true);
+    await checkVersion(db, scriptId, versionId, input.code, language, input.activate ?? true);
     const version = db.prepare('SELECT * FROM script_versions WHERE id=?').get(versionId) as Row;
     return versionDTO(p, row, version);
   });
@@ -185,18 +187,21 @@ export async function getVersion(p: Principal | null, scriptId: number, version:
   if (!v) throw new AppError('NOT_FOUND', '脚本版本不存在');
   return versionDTO(p, row, v);
 }
-export async function validate(code: string, p?: Principal): Promise<CheckReport> {
+export async function validate(code: string, p?: Principal, language: ScriptLanguage = 'javascript'): Promise<CheckReport> {
   checkCode(code);
-  return checkedScriptCall(getDb(), p, () => runner.validateScript(code));
+  const checkedLanguage = parseInput(languageSchema, language);
+  return checkedScriptCall(getDb(), p, () => runner.validateScript(code, checkedLanguage));
 }
-export async function dryRun(p: Principal, input: { code?: string; scriptId?: number; version?: number; scenario?: string; state?: ScriptState; init?: InitInfo }): Promise<DryRunResult> {
+export async function dryRun(p: Principal, input: { code?: string; language?: ScriptLanguage; scriptId?: number; version?: number; scenario?: string; state?: ScriptState; init?: InitInfo }): Promise<DryRunResult> {
   const options = checkDryRunOptions(input);
   let code = input.code;
+  let language = parseInput(languageSchema, input.language ?? 'javascript');
   let captureLogs = true;
   if (code !== undefined && input.scriptId !== undefined) throw new AppError('VALIDATION_ERROR', 'code 和 scriptId 只能提供一个');
   if (code === undefined) {
     if (input.scriptId === undefined) throw new AppError('VALIDATION_ERROR', '请提供 code 或 scriptId');
     const row = scriptRow(input.scriptId); requireVisible(p, row);
+    language = parseInput(languageSchema, row.language ?? 'javascript');
     const owner = ownsAgent(p, row.agent_id);
     if (!owner && row.visibility !== 'open') throw new AppError('FORBIDDEN', '只有所有者可以试跑未公开代码的脚本');
     captureLogs = owner;
@@ -207,7 +212,7 @@ export async function dryRun(p: Principal, input: { code?: string; scriptId?: nu
     code = v.code as string;
   }
   checkCode(code);
-  const result = await checkedScriptCall(getDb(), p, () => runner.dryRun({ code, ...options }));
+  const result = await checkedScriptCall(getDb(), p, () => runner.dryRun({ code, language, ...options }));
   if (!captureLogs) { result.logs = []; delete result.error; }
   return result;
 }

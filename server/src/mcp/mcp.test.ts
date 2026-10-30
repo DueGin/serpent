@@ -150,6 +150,10 @@ test('MCP SDK Client 完整参赛流程', { timeout: 300_000 }, async (t) => {
     assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://docs/rules'));
     assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://docs/review'));
     assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://examples/flood-fill'));
+    assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://examples/flood-fill-python' && resource.mimeType === 'text/x-python'));
+    assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://examples/greedy-bfs-python'));
+    const pythonResource = await client1.readResource({ uri: 'serpent://examples/flood-fill-python' });
+    assert.match(JSON.stringify(pythonResource.contents), /def move\(state\)/);
     const reviewDoc = await client1.readResource({ uri: 'serpent://docs/review' });
     assert.match(JSON.stringify(reviewDoc.contents), /复盘与数据分析/);
     assert.match(JSON.stringify(reviewDoc.contents), /hadSafeAlternative/);
@@ -157,6 +161,10 @@ test('MCP SDK Client 完整参赛流程', { timeout: 300_000 }, async (t) => {
     assert.ok(prompt.messages.length > 0);
     assert.match(JSON.stringify(prompt.messages), /review_match/);
     assert.match(JSON.stringify(prompt.messages), /get_script_trend/);
+    const pythonPrompt = await client1.getPrompt({ name: 'write_snake_script', arguments: { mode: 'battle', language: 'python' } });
+    assert.match(JSON.stringify(pythonPrompt.messages), /Pyodide/);
+    assert.match(JSON.stringify(pythonPrompt.messages), /flood-fill-python/);
+    assert.match(JSON.stringify(pythonPrompt.messages), /dict\/list/);
   });
 
   await t.test('REST 文档与 whoami/get_rules/list_scenarios', async () => {
@@ -185,6 +193,43 @@ test('MCP SDK Client 完整参赛流程', { timeout: 300_000 }, async (t) => {
     }, z.object({ ok: z.boolean(), legal: z.boolean(), direction: z.string().nullable() }).passthrough());
     assert.equal(dry.ok, true, JSON.stringify(dry));
     assert.equal(dry.legal, true);
+  });
+
+  await t.test('Python language 从 MCP 检测、试跑、创建和参赛贯通', { timeout: 180_000 }, async () => {
+    const code = 'def move(state):\n    legal = state["legalMoves"]\n    return legal[0] if legal else state["you"]["dir"]';
+    const report = await call(client1, 'validate_code', { code, language: 'python' }, z.object({
+      ok: z.boolean(), items: z.array(z.object({ id: z.string(), status: z.string() }).passthrough()),
+    }));
+    assert.equal(report.ok, true, JSON.stringify(report.items));
+    const dry = await call(client1, 'dry_run', { code, language: 'python', scenario: 'solo-open' }, z.object({
+      ok: z.boolean(), legal: z.boolean(), direction: z.string().nullable(),
+    }));
+    assert.equal(dry.ok, true, JSON.stringify(dry));
+    assert.equal(dry.legal, true);
+    const created = await call(client1, 'create_script', { name: 'python-mcp', code, language: 'python' }, z.object({
+      id: z.number(), language: z.literal('python'), activeVersion: z.number().nullable(),
+    }));
+    assert.equal(created.activeVersion, 1);
+    const savedDry = await call(client1, 'dry_run', { scriptId: created.id, scenario: 'solo-open' }, z.object({
+      ok: z.boolean(), legal: z.boolean(),
+    }));
+    assert.equal(savedDry.ok, true);
+    assert.equal(savedDry.legal, true);
+    const updated = await call(client1, 'update_script', { scriptId: created.id, code, note: 'Python v2' }, z.object({
+      version: z.number(), status: z.literal('valid'),
+    }));
+    assert.equal(updated.version, 2);
+    const match = await call(client1, 'run_test_match', {
+      mode: 'battle', participants: [{ scriptId: created.id }, { builtin: 'greedy' }], seed: 173, maxTicks: 15,
+    }, z.object({
+      id: z.number(), status: z.literal('done'), participants: z.array(z.object({ errors: z.number(), timeouts: z.number() })),
+    }));
+    assert.equal(match.participants[0]?.errors, 0);
+    assert.equal(match.participants[0]?.timeouts, 0);
+    const review = await call(client1, 'review_match', { matchId: match.id, slot: 0 }, z.object({ matchId: z.number() }));
+    assert.equal(review.matchId, match.id);
+    const badLanguage = textResultSchema.parse(await client1.callTool({ name: 'validate_code', arguments: { code, language: 'ruby' } }));
+    assert.equal(badLanguage.isError, true);
   });
 
   await t.test('create/get/update/set_meta/list/public', async () => {

@@ -4,6 +4,7 @@ export const idSchema = z.number().int().positive();
 export const directionSchema = z.enum(['up', 'down', 'left', 'right']);
 export const modeSchema = z.enum(['solo', 'score', 'battle']);
 export const visibilitySchema = z.enum(['private', 'listed', 'open']);
+export const languageSchema = z.enum(['javascript', 'python']);
 export const builtinSchema = z.enum(['greedy', 'coward', 'random']);
 
 export const pointSchema = z.object({
@@ -81,6 +82,7 @@ export const participantSchema = z.union([
 
 export const dryRunSchema = z.object({
   code: z.string().max(64 * 1024).optional(),
+  language: languageSchema.optional(),
   scriptId: idSchema.optional(),
   version: z.number().int().positive().optional(),
   scenario: z.string().min(1).optional(),

@@ -4,7 +4,7 @@ import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
 import type {
   CheckReport, DryRunInput, DryRunResult, Frame, Replay, ScenarioInfo,
-  ScriptState, SimulateInput, SimulateResult,
+  ScriptLanguage, ScriptState, SimulateInput, SimulateResult,
 } from '../types';
 import { defaultConfig, ENGINE_VERSION } from './config';
 import { listScenarios } from './scenarios';
@@ -295,8 +295,10 @@ const pool = new RunnerPool({
   queueTimeoutMs: positive(process.env.RUNNER_QUEUE_TIMEOUT_MS, 30_000),
 });
 export function simulate(input: SimulateInput): Promise<SimulateResult> { return pool.run('simulate', input); }
-export function validateScript(code: string): Promise<CheckReport> { return pool.run('validate', code); }
+export function validateScript(code: string, language: ScriptLanguage = 'javascript'): Promise<CheckReport> {
+  return pool.run('validate', { code, language });
+}
 export function dryRun(input: DryRunInput): Promise<DryRunResult> { return pool.run('dryRun', input); }
 export function shutdownRunner(): Promise<void> { return pool.shutdown(); }
 
-export type { CheckReport, DryRunInput, DryRunResult, Frame, Replay, ScenarioInfo, ScriptState, SimulateInput, SimulateResult };
+export type { CheckReport, DryRunInput, DryRunResult, Frame, Replay, ScenarioInfo, ScriptLanguage, ScriptState, SimulateInput, SimulateResult };

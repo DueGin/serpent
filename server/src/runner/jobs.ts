@@ -1,13 +1,13 @@
 import { performance } from 'node:perf_hooks';
 import {
   type CheckItem, type CheckReport, type DecisionTrace, type Direction, type DryRunInput, type DryRunResult,
-  type InitInfo, type ParticipantResult, type Replay, type ScriptState,
+  type InitInfo, type ParticipantResult, type Replay, type ScriptLanguage, type ScriptState,
   type SimulateInput, type SimulateResult, COLORS, OPPOSITE,
 } from '../types';
 import { createGame, disqualify, evaluateEnd, queueDirection, rankResults, step } from '../game/engine';
 import { chooseMove } from '../game/bot';
 import { buildInitInfo, buildScriptState } from '../game/observe';
-import { createSandbox, inspectScript, SandboxError, type SandboxCallResult, type ScriptSandbox } from '../sandbox';
+import { createSandbox, inspectScript, SandboxError, type SandboxCallResult, type Sandbox } from '../sandbox';
 import { defaultConfig, ENGINE_VERSION } from './config';
 import { listScenarios } from './scenarios';
 
@@ -42,6 +42,8 @@ function assertLimits(input: SimulateInput): void {
   if (config.mode !== 'solo' && participants.length < 2) throw new Error('Multiplayer matches need at least two participants');
   for (const participant of participants) {
     if (participant.source.kind === 'builtin' && !['greedy', 'coward', 'random'].includes(participant.source.bot)) throw new Error('Invalid builtin bot');
+    if (participant.source.kind === 'script' && participant.source.language !== undefined &&
+        !['javascript', 'python'].includes(participant.source.language)) throw new Error('脚本语言无效');
     if (!['builtin', 'script'].includes(participant.source.kind)) throw new Error('Invalid participant source');
   }
 }
@@ -52,7 +54,7 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
   const participants = [...input.participants].sort((a, b) => a.slot - b.slot);
   const state = createGame({ config: input.config, participants });
   const captureLogs = input.captureLogs !== false;
-  const sandboxes = new Map<number, ScriptSandbox>();
+  const sandboxes = new Map<number, Sandbox>();
   const stats = new Map<number, Stats>(participants.map((participant) => [participant.slot, {
     slot: participant.slot, rank: 1, score: 0, length: 3, alive: true,
     deathTick: null, deathReason: null, kills: 0, moves: 0,
@@ -76,6 +78,10 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
     if (captureLogs) stats.get(slot)!.logs!.push(...lines.map((text) => ({ tick: state.tick, text })));
   };
   const failed = (stat: Stats, result: SandboxCallResult, phase: 'init' | 'move') => {
+    if (result.fatal) {
+      const reason = result.error ?? 'Python 安全限制已触发，参赛者失格';
+      stat.firstError = reason.slice(0, 1000);
+    }
     if (result.timeout) {
       stat.timeouts++;
       firstError(stat, result.error ?? `${phase}() 超时`);
@@ -89,24 +95,26 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
     for (const participant of participants) {
       if (participant.source.kind !== 'script') continue;
       const stat = stats.get(participant.slot)!;
+      const language = participant.source.language ?? 'javascript';
       const compileStart = cpuClock();
       try {
         const sandbox = await createSandbox(participant.source.code, {
           seed: input.config.seed, slot: participant.slot,
           moveTimeoutMs: input.config.moveTimeoutMs, initTimeoutMs: input.config.initTimeoutMs,
           memoryLimitMB: input.config.memoryLimitMB,
-        });
+        }, language);
         sandboxes.set(participant.slot, sandbox);
+        if (language === 'python') stat.cpuMs += sandbox.startupCpuMs ?? 0;
         if (!sandbox.hasMove) throw new Error('move() 未定义');
-        const result = sandbox.init(buildInitInfo(state, participant.slot));
-        stat.cpuMs += cpuClock() - compileStart;
+        const result = await sandbox.init(buildInitInfo(state, participant.slot));
+        stat.cpuMs += language === 'python' ? result.cpuMs ?? 0 : cpuClock() - compileStart;
         logs(participant.slot);
-        if (result.error || result.timeout) { failed(stat, result, 'init'); kill(participant.slot, 'init'); }
+        if (result.error || result.timeout || result.fatal) { failed(stat, result, 'init'); kill(participant.slot, 'init'); }
         else if (stat.cpuMs > input.config.matchCpuBudgetMs) { firstError(stat, '累计 CPU 预算已耗尽'); kill(participant.slot, 'init'); }
       } catch (error) {
         if (error instanceof SandboxError && error.timeout) stat.timeouts++;
         else stat.errors++;
-        stat.cpuMs += cpuClock() - compileStart;
+        if (language !== 'python') stat.cpuMs += cpuClock() - compileStart;
         firstError(stat, message(error));
         logs(participant.slot);
         kill(participant.slot, 'init');
@@ -134,15 +142,15 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
         }
         const sandbox = sandboxes.get(snake.slot)!;
         const cpuStarted = cpuClock();
-        const result = sandbox.move(observations.get(snake.slot)!);
+        const result = await sandbox.move(observations.get(snake.slot)!);
         stat.moves++;
         stat.moveMs += result.elapsedMs;
         stat.maxMoveMs = Math.max(stat.maxMoveMs, result.elapsedMs);
-        stat.cpuMs += cpuClock() - cpuStarted;
+        stat.cpuMs += participant.source.language === 'python' ? result.cpuMs ?? 0 : cpuClock() - cpuStarted;
         elapsed[playerIndex] = Math.round(result.elapsedMs * 100) / 100;
         logs(snake.slot);
         let direction = snake.dir;
-        if (result.error || result.timeout) {
+        if (result.error || result.timeout || result.fatal) {
           codes[playerIndex] = result.timeout ? 't' : 'e';
           failed(stat, result, 'move');
         }
@@ -152,8 +160,11 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
           stat.consecutive++;
           firstError(stat, result.direction ? '禁止 180 度掉头' : 'move() 返回非法方向');
         } else { codes[playerIndex] = 'o'; direction = result.direction; stat.consecutive = 0; }
-        if (stat.consecutive >= 50 || stat.cpuMs > input.config.matchCpuBudgetMs) {
-          if (stat.cpuMs > input.config.matchCpuBudgetMs) firstError(stat, '累计 CPU 预算已耗尽');
+        if (result.fatal || stat.consecutive >= 50 || stat.cpuMs > input.config.matchCpuBudgetMs) {
+          if (stat.cpuMs > input.config.matchCpuBudgetMs) {
+            if (participant.source.language === 'python') stat.firstError = '累计 CPU 预算已耗尽';
+            else firstError(stat, '累计 CPU 预算已耗尽');
+          }
           pendingDisqualifications.push(snake.slot);
         } else choices.set(snake.slot, direction);
       }
@@ -202,7 +213,7 @@ function deriveInit(state: ScriptState): InitInfo {
 }
 
 export async function runDryRun(input: DryRunInput): Promise<DryRunResult> {
-  let sandbox: ScriptSandbox | undefined;
+  let sandbox: Sandbox | undefined;
   const output: DryRunResult = { ok: false, direction: null, raw: null, legal: false, logs: [], initMs: 0, moveMs: 0 };
   try {
     if (typeof input.code !== 'string') throw new Error('缺少脚本代码');
@@ -216,23 +227,23 @@ export async function runDryRun(input: DryRunInput): Promise<DryRunResult> {
       seed: 12345, slot: state.you.slot,
       moveTimeoutMs: info.limits.moveTimeoutMs, initTimeoutMs: info.limits.initTimeoutMs,
       memoryLimitMB: info.limits.memoryLimitMB,
-    });
-    const init = sandbox.init(info);
+    }, input.language ?? 'javascript');
+    const init = await sandbox.init(info);
     output.initMs = round(init.elapsedMs);
-    if (init.error || init.timeout) throw new Error(init.error ?? 'init() 超时');
-    const move = sandbox.move(state);
+    if (init.error || init.timeout || init.fatal) throw new Error(init.error ?? (init.timeout ? 'init() 超时' : 'Python 进程失格'));
+    const move = await sandbox.move(state);
     output.moveMs = round(move.elapsedMs);
     output.raw = move.raw;
     output.direction = move.direction;
     output.legal = Boolean(move.direction && state.legalMoves.includes(move.direction));
-    output.ok = !move.error && !move.timeout && output.legal;
-    if (!output.ok) output.error = move.error ?? (move.timeout ? 'move() 超时' : move.direction ? '返回方向不在 legalMoves 中' : 'move() 返回非法方向');
+    output.ok = !move.error && !move.timeout && !move.fatal && output.legal;
+    if (!output.ok) output.error = move.error ?? (move.timeout ? 'move() 超时' : move.fatal ? 'Python 进程失格' : move.direction ? '返回方向不在 legalMoves 中' : 'move() 返回非法方向');
   } catch (error) { output.error = message(error); }
   finally { output.logs = sandbox?.drainLogs() ?? []; sandbox?.dispose(); }
   return output;
 }
 
-export async function runValidation(code: string): Promise<CheckReport> {
+export async function runValidation(code: string, language: ScriptLanguage = 'javascript'): Promise<CheckReport> {
   const started = performance.now();
   const items: CheckItem[] = [];
   const add = (id: typeof CHECKS[number], status: CheckItem['status'], detail?: string) => {
@@ -247,24 +258,24 @@ export async function runValidation(code: string): Promise<CheckReport> {
   const bytes = Buffer.byteLength(code, 'utf8');
   add('size', bytes <= 65_536 ? 'pass' : 'fail', `${bytes} / 65536 字节`);
   if (bytes > 65_536) return finish();
-  const inspection = await inspectScript(code);
+  const inspection = await inspectScript(code, {}, language);
   add('compile', inspection.compile ? 'pass' : 'fail', inspection.error);
   add('has-move', inspection.hasMove ? 'pass' : 'fail', inspection.hasMove ? undefined : '必须定义同步 move(state)');
   if (!inspection.compile || !inspection.hasMove) return finish();
   const scenarios = listScenarios();
   const runs: DryRunResult[] = [];
   for (const scenario of scenarios) {
-    const run = await runDryRun({ code, scenario: scenario.id });
+    const run = await runDryRun({ code, language, scenario: scenario.id });
     runs.push(run);
   }
   // init can throw arbitrary text, so detect independently of its message.
   let initError: string | undefined;
   if (inspection.hasInit) {
-    let sandbox: ScriptSandbox | undefined;
+    let sandbox: Sandbox | undefined;
     try {
-      sandbox = await createSandbox(code, { seed: 1, slot: 0, moveTimeoutMs: 50, initTimeoutMs: 500, memoryLimitMB: 32 });
-      const init = sandbox.init(scenarios[0]!.init);
-      if (init.error || init.timeout) initError = init.error ?? 'init() 超时';
+      sandbox = await createSandbox(code, { seed: 1, slot: 0, moveTimeoutMs: 50, initTimeoutMs: 500, memoryLimitMB: 32 }, language);
+      const init = await sandbox.init(scenarios[0]!.init);
+      if (init.error || init.timeout || init.fatal) initError = init.error ?? (init.timeout ? 'init() 超时' : 'Python 进程失格');
     } catch (error) { initError = message(error); }
     finally { sandbox?.dispose(); }
   }
@@ -278,12 +289,12 @@ export async function runValidation(code: string): Promise<CheckReport> {
   let wins = 0, moveTime = 0, moveCount = 0, maxMove = Math.max(...runs.map((run) => run.moveMs));
   for (const seed of [103, 271, 997]) {
     const solo = await runSimulation({ config: defaultConfig('solo', { seed, maxTicks: 100 }),
-      participants: [{ slot: 0, name: '检测脚本', team: null, source: { kind: 'script', code } }], captureLogs: false });
+      participants: [{ slot: 0, name: '检测脚本', team: null, source: { kind: 'script', code, language } }], captureLogs: false });
     const player = solo.participants[0]!;
     soloScores.push(player.score); soloTicks.push(solo.ticks);
     moveTime += player.avgMoveMs * player.moves; moveCount += player.moves; maxMove = Math.max(maxMove, player.maxMoveMs);
     const battle = await runSimulation({ config: defaultConfig('battle', { seed, players: 2, maxTicks: 100 }),
-      participants: [{ slot: 0, name: '检测脚本', team: null, source: { kind: 'script', code } },
+      participants: [{ slot: 0, name: '检测脚本', team: null, source: { kind: 'script', code, language } },
         { slot: 1, name: '贪心对手', team: null, source: { kind: 'builtin', bot: 'greedy' } }], captureLogs: false });
     if (battle.winners.includes(0)) wins += 1 / Math.max(1, battle.winners.length);
     const fighter = battle.participants[0]!;

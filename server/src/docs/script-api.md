@@ -1,6 +1,6 @@
 # 脚本接口：serpent-script-v1
 
-每个参赛脚本在独立沙箱 runtime 中运行。平台每拍同步调用一次 `move(state)`，脚本返回本拍方向；每局开始时可调用一次 `init(info)`。
+参赛脚本支持 `javascript`（默认）和 `python`。JavaScript 使用 QuickJS，Python 使用 Pyodide 的完整 CPython / WebAssembly；每个参赛者有独立的运行环境。平台每拍同步调用一次 `move(state)`，脚本返回本拍方向；每局开始时可调用一次 `init(info)`。对局中 Agent 不直接接入，只有平台沙箱执行已提交的脚本。
 
 ## 1. 最小脚本
 
@@ -36,15 +36,40 @@ exports.move = function (state) { return 'up'; };
 
 或者直接声明全局 `function move(state)`，不写导出语句。`init` 可选，`move` 必须存在。
 
+### Python
+
+创建、检测或直接用代码试跑时，明确传 `language: "python"`：
+
+```python
+def init(info):
+    pass
+
+def move(state):
+    legal = state["legalMoves"]
+    return legal[0] if legal else state["you"]["dir"]
+```
+
+`info` / `state` 是 JSON 转换后的普通 Python `dict` / `list`，不是 JsProxy。字段名与 JavaScript 一致；`null` 转为 `None`，布尔值转为 `True/False`。返回方向字符串或 `{"direction": "up"}`。不需要导出语句，必须定义顶层同步 `def move(state)`，`def init(info)` 可选；不支持协程、生成器或其他异步结果。
+
+脚本语言在创建时确定，之后的新版本沿用该语言，不能通过更新元数据或版本切换语言。已保存脚本的试跑与参赛自动读取其语言。
+
 ## 2. 生命周期与同步约束
 
 - `init(info)`：每局开始最多调用一次，适合记录 slot、team、地图尺寸或初始化缓存。
 - `move(state)`：每拍调用一次，必须同步返回方向或 `{ direction }`。
 - 全局变量在同一局内跨拍保留；不同参赛者、不同对局不共享 runtime。
-- 不支持模块加载、网络请求、定时调度或异步结果；不要返回 Promise。
-- 代码不要超过 64KB；默认 `init` 上限 500ms、每次 `move` 上限 50ms、内存 32MB、单局累计 CPU 30s。
+- JavaScript 不支持模块加载、网络请求、定时调度或异步结果；不要返回 Promise。Python 允许纯 Python 标准库导入，但不允许宿主桥接、文件或网络能力，见下节。
+- 代码不要超过 64KB；默认 `init` 上限 500ms、每次 `move` 上限 50ms、单局累计 CPU 30s。JavaScript 内存上限 32MB；Python 为解释器基线之上额外 32MB。
 
 `Math.random()` 由 `(seed, slot)` 确定性播种，`Date.now()` 返回确定值，不暴露真实时间。不要尝试读取或改变引擎 RNG；同 seed、同脚本应得到同结果。优先使用固定方向顺序处理同分项，让策略天然确定。
+
+Python 的 `random` 同样按 `(seed, slot)` 播种；`time.time()`、`time.monotonic()`、`time.perf_counter()` 返回确定值，不能当作真实墙钟预算。`os.urandom` 和 `random.SystemRandom` 不可用。使用固定迭代次数限制搜索，避免依赖时钟或集合的偶然遍历顺序。脚本随机源与食物生成 RNG 相互独立。
+
+### Python 标准库与隔离
+
+可使用 `math`、`heapq`、`collections`、`itertools`、`functools`、`bisect`、`array`、`dataclasses`、`typing`、`random` 等纯 Python 标准库。禁止导入 `js`、`pyodide`、`pyodide_js`、`_pyodide`、`micropip`、`ctypes`、`socket`、`subprocess`、`threading`、`multiprocessing`、`asyncio`；禁止读写文件、联网、安装第三方包或调用 `loadPackage`。
+
+一个解释器只服务一个对局参赛者或一次检测/试跑作业，用完销毁，不在不同作业、所有者之间复用。检测内部每个场景/模拟使用全新脚本命名空间。Python 在空环境变量的独立受限子进程中运行；超时先中断，宽限期后仍不返回则终止进程并失格，内存/累计 CPU 超限也失格。不要把本地 Python 环境可用的宿主能力当成平台 API。
 
 ## 3. InitInfo
 
@@ -58,6 +83,7 @@ interface InitInfo {
   wrap: boolean;
   maxTicks: number;
   targetScore: number | null;
+  maxHp: number | null;
   you: { id: string; slot: number; team: number | null };
   players: Array<{
     id: string;
@@ -89,6 +115,7 @@ interface ScriptState {
   height: number;
   wrap: boolean;
   targetScore: number | null;
+  maxHp: number | null;
   you: SnakeView;
   snakes: SnakeView[];
   foods: Point[];
@@ -106,6 +133,7 @@ interface SnakeView {
   length: number;
   score: number;
   alive: boolean;
+  hp: number | null;
 }
 
 interface Point { x: number; y: number }
@@ -117,6 +145,7 @@ interface Point { x: number; y: number }
 - `snakes` 包含自己，也包含已死亡的蛇；死亡蛇 `alive=false`，`body` 保留死亡时位置，`head` 可能为 `null`。**死亡蛇的尸体不再构成障碍**，这些历史 `body` 只供观察，构建碰撞图时必须跳过 `alive=false` 的蛇。
 - `body[0]` 是存活蛇的头；使用前应检查 `alive`、`head` 和数组长度，不要假设自定义试跑输入一定完整。
 - `foods` 是当前全部食物坐标。
+- `maxHp` 是生命值上限，`you.hp` / `snakes[].hp` 是当前生命值。新规则 `survival-64` 开局 100，每拍未进食减 1，吃到果实回满，归零死亡；历史 `classic` 对局两者均为 `null`。不要写死尺寸、穿墙或生命值规则，读取 `width/height/wrap/maxHp/hp`。
 - `legalMoves` 已去掉 180° 掉头；非穿墙地图还去掉出界方向。它**不保证安全**：仍可能撞自己或别人，也可能形成头对头。
 - 坐标系为 `x` 向右、`y` 向下，`(0,0)` 在左上角。`wrap=true` 时越过一边会从另一边出现。
 
@@ -153,11 +182,11 @@ module.exports = { init: init, move: move };
 
 ## 6. 碰撞建模建议
 
-构建障碍图时按模式区分：
+构建障碍图时同时考虑规则和模式：
 
 - 自己的身体在三种模式中都要处理。
-- `battle` 中，非队友蛇身体是障碍；还要额外评估敌人下一拍进入同一格的头对头风险。
-- `score` 中，其他蛇不伤害你，不要把它们误判成实体墙；咬自己仍会死。
+- `survival-64` 的 `battle` 和 `score` 中，非队友蛇身体都是障碍；还要额外评估敌人下一拍进入同一格或互换头部位置的风险。头对头比较移动前长度，短者死，等长同归于尽。
+- 历史 `classic`（`maxHp=null`）的 `score` 中其他蛇不伤害你；`classic battle` 头对头双方死亡。不要把新规则强套在历史复盘上。
 - `teams=true` 时，同 `team` 的队友身体可穿过、可重叠，头对头也不会死。
 - `wrap=true` 时，距离、BFS、洪泛和邻居计算都要做环绕，不能只给移动落点做环绕。
 
@@ -175,7 +204,7 @@ module.exports = { init: init, move: move };
 
 ## 8. 日志与确定性
 
-`console.log`、`info`、`warn`、`error` 会被捕获：每局最多 200 行、每行最多 500 字符，仅脚本所有者可见。日志应记录 tick、候选方向和评分等短信息，不要记录 Key 或整份状态。
+JavaScript 的 `console.log`、`info`、`warn`、`error` 和 Python 的 `print()` 会被捕获：每局最多 200 行、每行最多 500 字符，仅脚本所有者可见。日志应记录 tick、候选方向和评分等短信息，不要记录 Key 或整份状态。
 
 建议：
 
@@ -188,7 +217,7 @@ module.exports = { init: init, move: move };
 
 ### 检测
 
-`validate_code` / `POST /api/scripts/validate` 只检测，不保存。检测报告包含：
+`validate_code` / `POST /api/scripts/validate` 只检测，不保存。输入为 `{ code, language? }`，省略语言按 JavaScript。Python 使用 `compile()` 检查语法并检查顶层 `move`；其余检查项与 JavaScript 相同。检测报告包含：
 
 ```ts
 interface CheckReport {
@@ -213,7 +242,7 @@ interface CheckReport {
 
 检测项包括 `size`、`compile`、`has-move`、`init`、`scenarios`、`trap`、`solo-sim`、`battle-sim`、`perf`。`ok=true` 表示没有 fail；warn 仍值得处理，例如未选出唯一活路或平均单拍超过 20ms。
 
-内置场景至少有：`solo-open`、`solo-corner`、`food-adjacent`、`trap-one-exit`、`long-body-self-trap`、`battle-headon`、`score-wrap`、`team-mate-adjacent`。用 `list_scenarios` 或 `GET /api/scripts/scenarios` 获取含 `init` 和 `state` 的完整定义。
+用 `list_scenarios` 或 `GET /api/scripts/scenarios` 获取含 `init` 和 `state` 的完整定义，不要把场景 ID 当作稳定的规则替代品。新规则场景包括边界、低生命值寻食、不同长度的头对头和唯一安全出口 `trap-one-exit`。
 
 ### 试跑
 
@@ -222,13 +251,14 @@ interface CheckReport {
 ```ts
 interface DryRunInput {
   code: string;
+  language?: 'javascript' | 'python';
   scenario?: string;
   state?: ScriptState;
   init?: InitInfo;
 }
 ```
 
-对存储脚本试跑时，可用 `scriptId` 和可选 `version` 代替 `code`。结果字段：
+对存储脚本试跑时，可用 `scriptId` 和可选 `version` 代替 `code`，语言始终由存储脚本决定，无需传 `language`。结果字段：
 
 ```ts
 interface DryRunResult {
@@ -252,4 +282,4 @@ interface DryRunResult {
 - `flood-fill`：综合安全格、可达空间、食物、尾部启发和敌人风险。
 - `team-aware`：队友可穿行的空间评估、食物分工、站位与敌人规避。
 
-MCP 中读取 `serpent://examples/{name}`；仓库文件位于 `examples/scripts/{name}.js`。
+MCP 中读取 `serpent://examples/{name}`；JavaScript 仓库文件位于 `examples/scripts/{name}.js`。Python 示例为 `examples/scripts/greedy-bfs.py`、`examples/scripts/flood-fill.py`，MCP 资源分别为 `serpent://examples/greedy-bfs-python`、`serpent://examples/flood-fill-python`。两种 Python 示例都从 state 读取地图、穿墙和生命值字段，适用于 classic 与 survival-64。

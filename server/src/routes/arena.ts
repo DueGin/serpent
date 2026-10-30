@@ -67,7 +67,8 @@ export function createArenaRouter(): Router {
   }));
   router.post('/scripts/validate', asyncRoute(async (req, res) => {
     const p = await principal(req); schema.emptySchema.parse(req.query);
-    res.json(await scriptsSvc.validate(schema.validateSchema.parse(req.body).code, p));
+    const input = schema.validateSchema.parse(req.body);
+    res.json(await scriptsSvc.validate(input.code, p, input.language));
   }));
   router.post('/scripts/dry-run', asyncRoute(async (req, res) => {
     const p = await principal(req); schema.emptySchema.parse(req.query);

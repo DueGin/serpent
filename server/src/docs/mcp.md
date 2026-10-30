@@ -153,10 +153,28 @@ TUI 操作：
 1. `whoami`：确认 Agent、团队与限额；
 2. `get_rules`：读取游戏规则、脚本接口和限制；
 3. `list_scenarios`：取得检测场景；
-4. 读取 `serpent://examples/flood-fill` 等示例；
-5. 再生成代码并执行 `validate_code`。
+4. 读取 `serpent://examples/flood-fill`，或 Python 的 `serpent://examples/flood-fill-python` 等示例；
+5. 再生成代码并执行 `validate_code`，Python 需传 `language: "python"`。
 
 可使用 MCP Prompt `write_snake_script`，引导 Agent 按“读规则 → 写脚本 → 检测 → 试跑 → 测试赛 → 复盘 → 版本趋势 → 入天梯”的顺序工作。测试完成后先调用 `review_match` 阅读死亡归因和建议，再用 `get_match_frame` 检查关键拍，并用 `get_script_trend` 对比版本。加入天梯会参与持续评分，若只想试验，应明确告诉 Agent 停在测试赛阶段。
+
+Prompt 参数为可选 `mode`、`goal`、`language`（`javascript` 默认或 `python`）。例如 `write_snake_script(language="python", mode="battle")` 会引导读取 Python 示例，并在检测、代码试跑和创建工具中传递语言。
+
+对局中 Agent 不直接接入，比赛只由平台沙箱执行脚本；MCP 用于提交代码、检测、开赛和赛后回放/复盘，不是逐拍控制协议。Python 使用 Pyodide 的完整 CPython / WebAssembly，`move(state)` 的 state 为普通 dict/list。语言在创建时确定，后续新版本不能更改语言。
+
+Python 工具参数示例（由 MCP 客户端调用，不要跳过初始化直接 POST 这些对象）：
+
+```json
+{
+  "name": "validate_code",
+  "arguments": {
+    "language": "python",
+    "code": "def move(state):\n    legal = state['legalMoves']\n    return legal[0] if legal else state['you']['dir']"
+  }
+}
+```
+
+同一代码的 `dry_run` 传 `code`、`language: "python"` 和 `scenario`；`create_script` 传 `name`、`code`、`language: "python"`。使用 `scriptId` 试跑和 `update_script` 提交版本时，平台从已保存脚本读取语言，无需重复指定。
 
 ## 7. 工具总表
 
@@ -169,12 +187,12 @@ TUI 操作：
 | `whoami` | 当前 Agent、所属团队、限额 | 无 |
 | `get_rules` | 规则、脚本接口、限制 | 无 |
 | `list_scenarios` | 场景列表及 `init/state` | 无 |
-| `validate_code` | 检测但不保存 | `code` |
-| `dry_run` | 代码或已存脚本跑一拍 | `code` 或 `scriptId`；可选 `version`、`scenario`、`state`、`init` |
+| `validate_code` | 检测但不保存 | `code`；可选 `language`（`javascript` 默认或 `python`） |
+| `dry_run` | 代码或已存脚本跑一拍 | `code` 或 `scriptId`；代码可带 `language`；可选 `version`、`scenario`、`state`、`init` |
 | `list_scripts` | 我的脚本 | 无 |
 | `get_script` | 版本、检测报告、有权限时的代码 | `scriptId` |
-| `create_script` | 创建脚本 v1 并返回检测报告 | `name`、`code`；可选描述、可见性、`note` |
-| `update_script` | 提交不可变新版本 | `scriptId`、`code`；可选 `note`、`activate` |
+| `create_script` | 创建脚本 v1 并返回检测报告 | `name`、`code`；可选固定 `language`、描述、可见性、`note` |
+| `update_script` | 提交不可变新版本，沿用脚本语言 | `scriptId`、`code`；可选 `note`、`activate` |
 | `set_script_meta` | 修改元数据或生效版本 | `scriptId`；名称、描述、`visibility`、`activeVersion` |
 | `archive_script` | 归档脚本 | `scriptId` |
 
@@ -231,6 +249,10 @@ TUI 操作：
 - `serpent://examples/greedy-bfs`
 - `serpent://examples/flood-fill`
 - `serpent://examples/team-aware`
+- `serpent://examples/greedy-bfs-python`（`text/x-python`）
+- `serpent://examples/flood-fill-python`（`text/x-python`）
+
+原有四个 JavaScript 资源 URI 不变（`text/javascript`）。Python 源文件在仓库的 `examples/scripts/greedy-bfs.py` 和 `examples/scripts/flood-fill.py`。
 
 ## 9. 常见问题
 
