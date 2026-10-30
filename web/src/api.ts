@@ -20,6 +20,7 @@ import type {
   ReplayDTO,
   ScenarioInfo,
   ScriptDetailDTO,
+  ScriptLanguage,
   ScriptSummaryDTO,
   ScriptTrendDTO,
   ScriptVersionDTO,
@@ -88,14 +89,14 @@ export const getAgentDirectory = () => req<{ data: AgentDTO[] }>('/agents/direct
 export const listScripts = (agentId?: number) => req<{ data: ScriptSummaryDTO[] }>(`/scripts${query({ agentId })}`);
 export const listPublicScripts = (q = '', limit = 100) => req<{ data: ScriptSummaryDTO[] }>(`/scripts/public${query({ q, limit })}`);
 export const getScript = (id: number) => req<ScriptDetailDTO>(`/scripts/${id}`);
-export const createScript = (input: { agentId?: number; name: string; description?: string; visibility?: 'private' | 'listed' | 'open'; code: string; note?: string }) => send<ScriptDetailDTO>('/scripts', 'POST', input);
+export const createScript = (input: { agentId?: number; name: string; description?: string; visibility?: 'private' | 'listed' | 'open'; code: string; language: ScriptLanguage; note?: string }) => send<ScriptDetailDTO>('/scripts', 'POST', input);
 export const updateScript = (id: number, input: { name?: string; description?: string; visibility?: 'private' | 'listed' | 'open'; activeVersion?: number }) => send<ScriptDetailDTO>(`/scripts/${id}`, 'PATCH', input);
 export const archiveScript = (id: number) => send<{ ok: boolean }>(`/scripts/${id}`, 'DELETE');
 export const addScriptVersion = (id: number, input: { code: string; note?: string; activate?: boolean }) => send<ScriptVersionDTO>(`/scripts/${id}/versions`, 'POST', input);
 export const getScriptVersion = (id: number, version: number) => req<ScriptVersionDTO>(`/scripts/${id}/versions/${version}`);
 export const getScriptTrend = (id: number, params: { mode?: GameMode; limit?: number } = {}) => req<ScriptTrendDTO>(`/scripts/${id}/trend${query(params)}`);
-export const validateScript = (code: string) => send<CheckReport>('/scripts/validate', 'POST', { code });
-export const dryRunScript = (input: { code?: string; scriptId?: number; version?: number; scenario?: string; state?: unknown; init?: unknown }) => send<DryRunResult>('/scripts/dry-run', 'POST', input);
+export const validateScript = (code: string, language: ScriptLanguage) => send<CheckReport>('/scripts/validate', 'POST', { code, language });
+export const dryRunScript = (input: { code?: string; language?: ScriptLanguage; scriptId?: number; version?: number; scenario?: string; state?: unknown; init?: unknown }) => send<DryRunResult>('/scripts/dry-run', 'POST', input);
 export const getScenarios = () => req<{ data: ScenarioInfo[] }>('/scripts/scenarios');
 
 export const createMatch = (input: CreateMatchInput) => send<MatchDetailDTO>('/matches', 'POST', input);
@@ -128,16 +129,39 @@ export const listDocs = () => req<{ data: DocSummary[] }>('/docs');
 export const getDoc = (name: string) => req<DocContent>(`/docs/${encodeURIComponent(name)}`);
 
 export const DEFAULT_SCRIPT = `function move(state) {
+  const legal = state.legalMoves;
+  if (legal.length === 0) return state.you.dir || 'up';
   const head = state.you.head;
   const food = state.foods[0];
-  if (!head || !food) return state.legalMoves[0];
+  if (!head || !food) return legal[0];
   const dx = food.x - head.x;
   const dy = food.y - head.y;
   const preferred = Math.abs(dx) > Math.abs(dy)
     ? (dx > 0 ? 'right' : 'left')
     : (dy > 0 ? 'down' : 'up');
-  return state.legalMoves.includes(preferred) ? preferred : state.legalMoves[0];
+  return legal.includes(preferred) ? preferred : legal[0];
 }`;
+
+export const PYTHON_SCRIPT = `def move(state):
+    legal = state["legalMoves"]
+    if not legal:
+        return state["you"]["dir"] or "up"
+    head = state["you"]["head"]
+    food = state["foods"][0] if state["foods"] else None
+    if head is None or food is None:
+        return legal[0]
+    dx = food["x"] - head["x"]
+    dy = food["y"] - head["y"]
+    if abs(dx) > abs(dy):
+        preferred = "right" if dx > 0 else "left"
+    else:
+        preferred = "down" if dy > 0 else "up"
+    return preferred if preferred in legal else legal[0]`;
+
+export const SCRIPT_TEMPLATES: Record<ScriptLanguage, string> = {
+  javascript: DEFAULT_SCRIPT,
+  python: PYTHON_SCRIPT,
+};
 
 export const BUILTIN_LABEL: Record<BuiltinBot, string> = {
   greedy: '贪吃 · Greedy',

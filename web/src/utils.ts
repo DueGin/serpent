@@ -1,6 +1,7 @@
-import type { DeathReason, EndReason, GameMode, MatchKind, MatchStatus, ScriptVisibility, VersionStatus } from './types';
+import type { DeathReason, EndReason, GameMode, MatchKind, MatchStatus, ScriptLanguage, ScriptVisibility, VersionStatus } from './types';
 
 export const MODE_LABEL: Record<GameMode, string> = { solo: '单人基准', score: '抢分赛', battle: '生存战' };
+export const SCRIPT_LANGUAGE_LABEL: Record<ScriptLanguage, string> = { javascript: 'JavaScript', python: 'Python' };
 export const KIND_LABEL: Record<MatchKind, string> = { test: '测试', exhibition: '表演', ladder: '天梯', benchmark: '基准' };
 export const STATUS_LABEL: Record<MatchStatus, string> = { queued: '排队中', running: '模拟中', done: '已完成', error: '异常' };
 export const DEATH_LABEL: Record<DeathReason, string> = { wall: '撞墙', self: '咬到自己', snake: '撞上对手', head: '头对头', starve: '生命值耗尽', disqualified: '失格' };

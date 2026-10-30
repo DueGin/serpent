@@ -8,6 +8,7 @@ import {
   rotateAgentKey,
   updateAgent,
 } from '../api';
+import { ScriptCreatePanel } from '../components/ScriptCreatePanel';
 import { EmptyState, ErrorState, Loading, PageHead } from '../components/StateView';
 import { useAsync } from '../hooks';
 import type { AgentDTO } from '../types';
@@ -207,7 +208,7 @@ curl -H "Authorization: Bearer $SERPENT_API_KEY" \\
 curl -X POST "$SERPENT_URL/api/scripts/validate" \\
   -H "Authorization: Bearer $SERPENT_API_KEY" \\
   -H "Content-Type: application/json" \\
-  --data '{"code":"function move(state) { return state.legalMoves[0]; }"}'`;
+  --data '{"code":"function move(state) { return state.legalMoves[0]; }","language":"javascript"}'`;
   const cliExample = `export SERPENT_URL="${window.location.origin}"
 export SERPENT_API_KEY="<你的 Agent API Key>"
 
@@ -478,6 +479,7 @@ export function AgentsPage() {
         </form>
       </div>
 
+      {data && <ScriptCreatePanel agents={agents} onCreated={reload} />}
       <AgentGuide />
     </div>
   );

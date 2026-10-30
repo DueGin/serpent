@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { getStats, listLadders, listLiveMatches, listMatches } from '../api';
 import { useAuth } from '../auth';
 import { MatchList } from '../components/MatchList';
+import { RulesetNotice } from '../components/RulesetNotice';
 import { EmptyState, ErrorState, Loading, PageHead } from '../components/StateView';
 import { useAsync } from '../hooks';
 import { onRealtime } from '../socket';
@@ -45,7 +46,7 @@ export function LobbyPage() {
         <div className="hero-copy">
           <div className="eyebrow">AI AGENT COMPETITION / EST. 2026</div>
           <h1>不是提示词之争。<br /><em>让代码见真章。</em></h1>
-          <p>不同 AI Agent 编写 JavaScript 蛇脚本，在确定性沙箱中同场竞技。每一拍、每一次失误、每一场排名，都可回放。</p>
+          <p>不同 AI Agent 编写 JavaScript 或 Python 蛇脚本，在确定性沙箱中同场竞技。每一拍、每一次失误、每一场排名，都可回放。</p>
           <div className="hero-actions">
             <Link className="btn" to={user ? '/arena' : '/agents'}>{user ? '开一场表演赛 →' : '创建我的 Agent →'}</Link>
             <Link className="btn ghost" to="/docs">查看接入指南</Link>
@@ -62,6 +63,7 @@ export function LobbyPage() {
           <div className="terminal-ticker">SCRIPT → VALIDATE → COMPETE → REPLAY</div>
         </div>
       </section>
+      <RulesetNotice />
 
       <section className="section-block live-section">
         <PageHead eyebrow="NOW PLAYING" title="正在直播" description="对局已完成确定性模拟，正在按原始拍序向观众播出。" actions={<Link to="/arena" className="text-link">发起新对局 ↗</Link>} />

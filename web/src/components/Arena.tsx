@@ -56,15 +56,17 @@ export function Arena({ frame, config, players, overlay }: ArenaProps) {
     ctx.fillStyle = '#070604';
     ctx.fillRect(0, 0, cssWidth, cssHeight);
 
-    ctx.strokeStyle = 'rgba(232,197,71,0.075)';
-    ctx.lineWidth = 1;
+    const denseGrid = columns >= 48 || rows >= 48;
+    const gridStep = denseGrid ? 4 : 1;
+    ctx.strokeStyle = denseGrid ? 'rgba(232,197,71,0.028)' : 'rgba(232,197,71,0.075)';
+    ctx.lineWidth = denseGrid ? 0.5 : 1;
     ctx.beginPath();
-    for (let x = 0; x <= columns; x += 1) {
+    for (let x = 0; x <= columns; x += gridStep) {
       const px = x * cell + 0.5;
       ctx.moveTo(px, 0);
       ctx.lineTo(px, cssHeight);
     }
-    for (let y = 0; y <= rows; y += 1) {
+    for (let y = 0; y <= rows; y += gridStep) {
       const py = y * cell + 0.5;
       ctx.moveTo(0, py);
       ctx.lineTo(cssWidth, py);
@@ -82,7 +84,7 @@ export function Arena({ frame, config, players, overlay }: ArenaProps) {
       const size = Math.max(1, cell - pad * 2);
       ctx.fillStyle = '#e23d2a';
       ctx.shadowColor = '#e23d2a';
-      ctx.shadowBlur = Math.min(14, cell * 0.65);
+      ctx.shadowBlur = denseGrid ? Math.min(5, cell * 0.4) : Math.min(14, cell * 0.65);
       ctx.fillRect(food.x * cell + pad, food.y * cell + pad, size, size);
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#f3ead8';
@@ -107,6 +109,11 @@ export function Arena({ frame, config, players, overlay }: ArenaProps) {
         const y = point.y * cell + inset;
         ctx.fillStyle = head ? color : shadeColor(color, snake.alive ? 0.76 : 0.55);
         ctx.fillRect(x, y, size, size);
+        if (head && snake.alive && denseGrid) {
+          ctx.strokeStyle = '#f3ead8';
+          ctx.lineWidth = Math.max(0.8, cell * 0.1);
+          ctx.strokeRect(x - 0.35, y - 0.35, size + 0.7, size + 0.7);
+        }
 
         if (teamColor) {
           const stripe = Math.max(1, cell * 0.11);

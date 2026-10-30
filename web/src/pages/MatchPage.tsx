@@ -280,7 +280,7 @@ export function MatchPage() {
       <MatchHeader match={match} liveActive={liveActive} />
       {match.error && <div className="panel flash match-error" role="alert">对局异常：{match.error}</div>}
 
-      <div className="play match-layout">
+      <div className={`play match-layout ${replay.config.maxHp !== null ? 'match-layout-survival' : ''}`}>
         <main className="match-main">
           <div className="cabinet match-cabinet">
             <Arena
@@ -442,7 +442,7 @@ function ParticipantsPanel({ match, frame, revealed }: { match: MatchDetailDTO; 
       <section className="panel match-participants">
         <h3>参赛者</h3>
         {match.participants.map((participant) => (
-          <ParticipantCard key={participant.slot} participant={participant} frame={frame} revealed={revealed} />
+          <ParticipantCard key={participant.slot} participant={participant} frame={frame} revealed={revealed} maxHp={match.config.maxHp} />
         ))}
       </section>
     );
@@ -463,7 +463,7 @@ function ParticipantsPanel({ match, frame, revealed }: { match: MatchDetailDTO; 
               <span>{score} 分 · {alive}/{members.length} 存活</span>
             </div>
             {members.map((participant) => (
-              <ParticipantCard key={participant.slot} participant={participant} frame={frame} revealed={revealed} />
+              <ParticipantCard key={participant.slot} participant={participant} frame={frame} revealed={revealed} maxHp={match.config.maxHp} />
             ))}
           </div>
         );
@@ -472,8 +472,11 @@ function ParticipantsPanel({ match, frame, revealed }: { match: MatchDetailDTO; 
   );
 }
 
-function ParticipantCard({ participant, frame, revealed }: { participant: MatchParticipantDTO; frame: Frame; revealed: boolean }) {
+function ParticipantCard({ participant, frame, revealed, maxHp }: { participant: MatchParticipantDTO; frame: Frame; revealed: boolean; maxHp: number | null }) {
   const snake = frame.snakes.find((item) => item.slot === participant.slot);
+  const health = snake && typeof snake.hp === 'number' && Number.isFinite(snake.hp) && maxHp !== null && maxHp > 0
+    ? { value: snake.hp, max: maxHp, percent: Math.max(0, Math.min(100, (snake.hp / maxHp) * 100)) }
+    : null;
   const script = participant.scriptName
     ? `${participant.scriptName} · ${participant.version == null ? '版本 —' : `v${participant.version}`}`
     : participant.builtin ? BUILTIN_LABEL[participant.builtin] : '未绑定脚本';
@@ -500,6 +503,25 @@ function ParticipantCard({ participant, frame, revealed }: { participant: MatchP
           {snake ? snake.alive ? '存活' : `阵亡${participant.deathReason ? ` · ${DEATH_LABEL[participant.deathReason]}` : ''}` : '无帧数据'}
         </span>
       </div>
+      {health && (
+        <div className={`match-health ${health.value <= 25 ? 'is-low' : ''}`}>
+          <div className="match-health-heading">
+            <span>生命值</span>
+            <strong>{formatNumber(health.value)} / {formatNumber(health.max)}</strong>
+          </div>
+          <div
+            className="match-health-track"
+            role="progressbar"
+            aria-label={`${participant.name}生命值`}
+            aria-valuemin={0}
+            aria-valuemax={health.max}
+            aria-valuenow={health.value}
+          >
+            <i style={{ width: `${health.percent}%` }} />
+          </div>
+          {health.value <= 25 && <span className="match-health-warning">生命值偏低，需要尽快进食</span>}
+        </div>
+      )}
       <div className="match-participant-metrics">
         <span>耗时 平均 {formatNumber(participant.avgMoveMs, 1)}ms / 峰值 {formatNumber(participant.maxMoveMs, 1)}ms</span>
         <span>击杀 {participant.kills} · 超时 {participant.timeouts} · 错误 {participant.errors}</span>
