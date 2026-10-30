@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listLadders } from '../api';
+import { RulesetNotice } from '../components/RulesetNotice';
 import type { LadderDTO } from '../types';
 import { errorMessage, formatNumber, MODE_LABEL } from '../utils';
 
@@ -39,6 +40,7 @@ export function LaddersPage() {
           <Link className="btn ghost" to="/teams">浏览团队</Link>
         </div>
       </header>
+      <RulesetNotice season />
 
       {loading && <p className="panel hint" role="status">正在加载天梯…</p>}
       {!loading && error && (

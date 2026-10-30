@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getScriptTrend } from '../api';
 import { useAsync } from '../hooks';
+import { CURRENT_RULESET } from '../types';
 import type { DeathReason, GameMode, ScriptTrendVersion } from '../types';
 import { DEATH_LABEL, KIND_LABEL, MODE_LABEL, formatDate, formatNumber, formatPercent } from '../utils';
 import { Sparkline } from './Sparkline';
@@ -16,7 +17,7 @@ const MODE_OPTIONS: Array<{ value: TrendMode; label: string }> = [
   { value: 'battle', label: MODE_LABEL.battle },
 ];
 
-const DEATH_REASONS: DeathReason[] = ['wall', 'self', 'snake', 'head', 'disqualified'];
+const DEATH_REASONS: DeathReason[] = ['wall', 'self', 'snake', 'head', 'starve', 'disqualified'];
 
 function formatDeathReasons(reasons: ScriptTrendVersion['deathReasons']): string {
   const items = DEATH_REASONS.flatMap((reason) => {
@@ -42,6 +43,7 @@ export function ScriptTrendPanel({ scriptId }: { scriptId: number }) {
         <div className="trend-heading">
           <div className="trend-eyebrow">跨局表现</div>
           <h2 className="trend-title">跨局趋势</h2>
+          <p className="trend-ruleset">仅统计当前规则（{data?.ruleset ?? CURRENT_RULESET}）</p>
         </div>
         <div className="trend-mode-options" aria-label="趋势模式筛选">
           {MODE_OPTIONS.map((option) => (

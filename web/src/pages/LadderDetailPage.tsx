@@ -16,6 +16,7 @@ import {
 } from '../api';
 import { useAuth } from '../auth';
 import { MatchList } from '../components/MatchList';
+import { RulesetNotice } from '../components/RulesetNotice';
 import type {
   AgentDTO,
   LadderDTO,
@@ -351,6 +352,7 @@ export function LadderDetailPage() {
           <span><strong>{ladder.matches}</strong> 场对局</span>
         </div>
       </header>
+      <RulesetNotice season />
 
       <section className="panel">
         <div className="section-head">

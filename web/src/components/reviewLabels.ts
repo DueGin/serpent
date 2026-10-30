@@ -30,7 +30,7 @@ export const MOMENT_LABEL: Record<ReviewMomentKind, string> = {
   trapped: '被困',
   risky_move: '风险决策',
   slow_move: '耗时过高',
-  starving: '久未进食',
+  starving: '饥饿风险',
 };
 
 export function seriesValue<T>(values: readonly T[], index: number): T | undefined {

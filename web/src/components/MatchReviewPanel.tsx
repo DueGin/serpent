@@ -24,6 +24,7 @@ export function MatchReviewPanel(props: MatchReviewPanelProps) {
   const { review, currentTick, selectedSlot, onSelectSlot, onSeek, paused, frameReview, frameLoading, frameError } = props;
   const range = review.seriesRange ?? { from: 0, to: review.ticks };
   const series = review.series ?? [];
+  const maxHp = review.config.maxHp;
   const selectedParticipant = review.participants.find((item) => item.slot === selectedSlot) ?? review.participants[0] ?? null;
   const selectedSeries = series.find((item) => item.slot === selectedParticipant?.slot) ?? null;
   const currentIndex = currentTick - range.from;
@@ -31,6 +32,7 @@ export function MatchReviewPanel(props: MatchReviewPanelProps) {
     const score: LineChartSeries[] = [];
     const length: LineChartSeries[] = [];
     const space: LineChartSeries[] = [];
+    const hp: LineChartSeries[] = [];
     for (const participant of review.participants) {
       const values = series.find((item) => item.slot === participant.slot);
       if (!values) continue;
@@ -38,16 +40,25 @@ export function MatchReviewPanel(props: MatchReviewPanelProps) {
       length.push({ id: `${participant.slot}-length`, label: participant.name, color: participant.color, values: values.length });
       space.push({ id: `${participant.slot}-space`, label: `${participant.name} · 空间`, color: participant.color, values: values.space });
       space.push({ id: `${participant.slot}-body`, label: `${participant.name} · 身长参考`, color: participant.color, values: values.length, dashed: true });
+      if (values.hp.some((value) => value !== null)) {
+        hp.push({ id: `${participant.slot}-hp`, label: participant.name, color: participant.color, values: values.hp });
+      }
     }
-    return { score, length, space };
-  }, [review, series]);
+    const hpReference = series.find((item) => item.hp.some((value) => value !== null));
+    if (maxHp !== null && hpReference) {
+      hp.push({ id: 'max-hp', label: '生命值上限', color: '#b7a48a', values: hpReference.hp.map(() => maxHp), dashed: true });
+    }
+    return { score, length, space, hp };
+  }, [review, series, maxHp]);
 
+  const hasHp = maxHp !== null && charts.hp.length > 0;
   const space = selectedSeries ? seriesValue(selectedSeries.space, currentIndex) : undefined;
   const safeMoves = selectedSeries ? seriesValue(selectedSeries.safeMoves, currentIndex) : undefined;
   const foodDist = selectedSeries ? seriesValue(selectedSeries.foodDist, currentIndex) : undefined;
   const decision = selectedSeries ? seriesValue(selectedSeries.decision, currentIndex) : undefined;
   const moveMs = selectedSeries ? seriesValue(selectedSeries.moveMs, currentIndex) : undefined;
   const move = selectedSeries ? seriesValue(selectedSeries.move, currentIndex) : undefined;
+  const currentHp = selectedSeries && hasHp ? seriesValue(selectedSeries.hp, currentIndex) : undefined;
   const deaths = review.participants.filter((participant) => participant.death !== null);
 
   return (
@@ -85,6 +96,12 @@ export function MatchReviewPanel(props: MatchReviewPanelProps) {
           <div className="review-section-heading"><h3>可达空间</h3><span>实线为空间 · 虚线为身长参考</span></div>
           <LineChart title="各蛇可达空间与身长参考" from={range.from} to={range.to} series={charts.space} currentTick={currentTick} onSeek={onSeek} formatValue={formatChartValue} />
         </section>
+        {hasHp && (
+          <section className="panel review-chart-card review-hp-chart">
+            <div className="review-section-heading"><h3>生命值</h3><span>每拍生命值 · 虚线为上限 {maxHp} · ≤25 为低生命</span></div>
+            <LineChart title="各蛇每拍生命值与生命值上限" from={range.from} to={range.to} series={charts.hp} currentTick={currentTick} onSeek={onSeek} formatValue={formatChartValue} />
+          </section>
+        )}
       </div>
 
       <section className="panel review-decisions">
@@ -105,6 +122,13 @@ export function MatchReviewPanel(props: MatchReviewPanelProps) {
             <div><dt>决策</dt><dd>{decision ? DECISION_LABEL[decision] : '—'}</dd></div>
             <div><dt>耗时</dt><dd>{moveMs === null || moveMs === undefined ? '—' : `${formatNumber(moveMs, 2)} ms`}</dd></div>
             <div><dt>实际移动</dt><dd>{move ? `${DIRECTION_LABEL[move]} · ${move}` : '—'}</dd></div>
+            {hasHp && (
+              <>
+                <div><dt>当前生命值</dt><dd>{formatNumber(currentHp)}</dd></div>
+                <div><dt>最低生命值</dt><dd>{formatNumber(selectedParticipant?.stats.minHp)}</dd></div>
+                <div><dt>低生命拍数（≤25）</dt><dd>{formatNumber(selectedParticipant?.stats.lowHpTicks)}</dd></div>
+              </>
+            )}
           </dl>
           <h4>候选方向反事实</h4>
           {!paused ? <p className="hint">播放中不请求候选方向；暂停后自动显示，并在主棋盘标出安全格、致死格和实际选择。</p>

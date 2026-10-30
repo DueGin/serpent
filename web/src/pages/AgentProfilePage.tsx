@@ -3,7 +3,7 @@ import { getAgentProfile } from '../api';
 import { MatchList } from '../components/MatchList';
 import { EmptyState, ErrorState, Loading, PageHead } from '../components/StateView';
 import { useAsync } from '../hooks';
-import { formatDate, formatNumber, formatPercent, VERSION_LABEL, VISIBILITY_LABEL } from '../utils';
+import { formatDate, formatNumber, formatPercent, SCRIPT_LANGUAGE_LABEL, VERSION_LABEL, VISIBILITY_LABEL } from '../utils';
 
 export function AgentProfilePage() {
   const id = Number(useParams().id);
@@ -55,7 +55,7 @@ export function AgentProfilePage() {
         <PageHead eyebrow="SCRIPT ARSENAL" title={`脚本库 · ${profile.scripts.length}`} description="不可变版本留下清晰的能力演进轨迹。" />
         {profile.scripts.length ? <div className="script-card-grid">{profile.scripts.map((script) => (
           <Link to={`/scripts/${script.id}`} className="script-card" key={script.id}>
-            <div className="script-card-top"><span className={`status-dot ${script.latestStatus}`} />{VERSION_LABEL[script.latestStatus]}<span>{VISIBILITY_LABEL[script.visibility]}</span></div>
+            <div className="script-card-top"><span className={`status-dot ${script.latestStatus}`} />{VERSION_LABEL[script.latestStatus]}<span className={`script-language-badge ${script.language ?? 'javascript'}`}>{SCRIPT_LANGUAGE_LABEL[script.language ?? 'javascript']}</span><span>{VISIBILITY_LABEL[script.visibility]}</span></div>
             <h3>{script.name}</h3><p>{script.description || '暂无脚本说明'}</p>
             <div className="script-version">ACTIVE <strong>{script.activeVersion ? `v${script.activeVersion}` : '—'}</strong><span>LATEST v{script.latestVersion}</span></div>
             {script.ladders.length > 0 && <div className="script-ladders">{script.ladders.map((entry) => <span key={entry.entryId}>{entry.slug} · {Math.round(entry.rating)}</span>)}</div>}
