@@ -11,6 +11,8 @@ import type { Direction, InitInfo, ScriptState } from '../types';
 const MAX_CODE_BYTES = 64 * 1024;
 const MAX_LOG_LINES = 200;
 const MAX_LOG_CHARS = 500;
+export const MAX_SANDBOX_RESULT_BYTES = 64 * 1024;
+export const MAX_SANDBOX_ARRAY_LENGTH = 128;
 const DIRECTIONS = new Set<Direction>(['up', 'down', 'left', 'right']);
 
 export interface SandboxOptions {
@@ -91,6 +93,7 @@ const BOOTSTRAP = `
   const isArray = Array.isArray;
   const apply = Reflect.apply;
   const slice = String.prototype.slice;
+  const charCodeAt = String.prototype.charCodeAt;
   const stringify = JSON.stringify;
   const parse = JSON.parse;
   const string = String;
@@ -100,6 +103,28 @@ const BOOTSTRAP = `
   const hostLog = __hostLog;
   const NativeDate = Date;
   const clip = (text, length) => apply(slice, text, [0, length]);
+  const utf8Bytes = text => {
+    let bytes = 0;
+    for (let i = 0; i < text.length; i++) {
+      const code = apply(charCodeAt, text, [i]);
+      if (code < 128) bytes++;
+      else if (code < 2048) bytes += 2;
+      else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length &&
+          apply(charCodeAt, text, [i + 1]) >= 0xdc00 && apply(charCodeAt, text, [i + 1]) <= 0xdfff) {
+        bytes += 4;
+        i++;
+      } else bytes += 3;
+    }
+    return bytes;
+  };
+  const spend = (budget, bytes) => {
+    budget.bytes -= bytes;
+    if (budget.bytes < 0) throw '返回值序列化超过 ${MAX_SANDBOX_RESULT_BYTES} 字节限制';
+  };
+  const primitive = (value, budget) => {
+    spend(budget, utf8Bytes(stringify(value)));
+    return value;
+  };
   const message = (error) => {
     try { return clip(string(error && error.message !== undefined ? error.message : error), 1000); }
     catch (_) { return '脚本执行错误'; }
@@ -111,18 +136,32 @@ const BOOTSTRAP = `
     return stringify(out);
   };
   const sanitize = (value, depth, budget, seen) => {
-    if (--budget.count < 0 || depth > 8) return '[truncated]';
-    if (value === null || typeof value === 'boolean') return value;
-    if (typeof value === 'string') return clip(value, 5000);
-    if (typeof value === 'number') return finite(value) ? value : null;
-    if (typeof value !== 'object') return null;
-    for (let i = 0; i < seen.length; i++) if (seen[i] === value) return '[circular]';
+    if (--budget.count < 0 || depth > 8) return primitive('[truncated]', budget);
+    if (value === null || typeof value === 'boolean') return primitive(value, budget);
+    if (typeof value === 'string') return primitive(clip(value, 5000), budget);
+    if (typeof value === 'number') return primitive(finite(value) ? value : null, budget);
+    if (typeof value !== 'object') return primitive(null, budget);
+    for (let i = 0; i < seen.length; i++) {
+      if (seen[i] === value) return primitive('[circular]', budget);
+    }
     seen[seen.length] = value;
-    const out = isArray(value) ? setPrototypeOf([], null) : create(null);
-    const names = keys(value);
-    for (let i = 0; i < names.length && budget.count > 0; i++) {
-      const key = names[i];
-      out[clip(key, 500)] = sanitize(value[key], depth + 1, budget, seen);
+    spend(budget, 2);
+    let out;
+    if (isArray(value)) {
+      out = setPrototypeOf([], null);
+      const length = value.length;
+      for (let i = 0; i < ${MAX_SANDBOX_ARRAY_LENGTH} && i < length && budget.count > 0; i++) {
+        if (i) spend(budget, 1);
+        out[i] = sanitize(value[i], depth + 1, budget, seen);
+      }
+    } else {
+      out = create(null);
+      const names = keys(value);
+      for (let i = 0; i < names.length && budget.count > 0; i++) {
+        const key = clip(names[i], 500);
+        spend(budget, utf8Bytes(stringify(key)) + 1 + (i ? 1 : 0));
+        out[key] = sanitize(value[names[i]], depth + 1, budget, seen);
+      }
     }
     seen.length--;
     return out;
@@ -148,7 +187,7 @@ const BOOTSTRAP = `
       let part;
       try {
         part = typeof values[i] === 'string' ? values[i] :
-          stringify(sanitize(values[i], 0, {count: 100}, []));
+          stringify(sanitize(values[i], 0, {count: 100, bytes: 4096}, []));
       } catch (_) { part = '[unprintable]'; }
       text += (i ? ' ' : '') + part;
     }
@@ -188,7 +227,7 @@ const BOOTSTRAP = `
       if (result !== null && (typeof result === 'object' || typeof result === 'function') &&
           typeof result.then === 'function') return envelope(null, '不支持 Promise 返回值');
       if (operation === 'init') return envelope(null);
-      return envelope(sanitize(result, 0, {count: 500}, []));
+      return envelope(sanitize(result, 0, {count: 500, bytes: ${MAX_SANDBOX_RESULT_BYTES - 8}}, []));
     } catch (error) { return envelope(null, message(error)); }
   };
 })()
@@ -329,7 +368,11 @@ export class ScriptSandbox {
       }
       try {
         if (vm.typeof(result.value) !== 'string') return { error: '沙箱返回值格式错误' };
-        return JSON.parse(vm.getString(result.value));
+        const serialized = vm.getString(result.value);
+        if (Buffer.byteLength(serialized, 'utf8') > MAX_SANDBOX_RESULT_BYTES) {
+          return { error: `返回值序列化超过 ${MAX_SANDBOX_RESULT_BYTES} 字节限制` };
+        }
+        return JSON.parse(serialized);
       } finally { result.value.dispose(); }
     } finally { op.dispose(); data.dispose(); }
   }
@@ -352,12 +395,12 @@ export class ScriptSandbox {
     this.host.deadline = started + timeoutMs;
     try {
       const result = ScriptSandbox.runDriver(this.context, this.driver, name, JSON.stringify(input));
-      const raw = result.raw ?? null;
       const elapsedMs = performance.now() - started;
       const timeout = this.host.interrupted || elapsedMs > timeoutMs;
+      const raw = timeout || result.error ? null : result.raw ?? null;
       return {
         raw,
-        direction: name === 'move' && !timeout ? parseDirection(raw) : null,
+        direction: name === 'move' ? parseDirection(raw) : null,
         elapsedMs,
         timeout,
         ...(timeout ? { error: `${name}() 超时` } : result.error ? { error: result.error } : {}),

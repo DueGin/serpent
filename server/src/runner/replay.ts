@@ -1,6 +1,6 @@
 import type { Direction, Frame, Replay, ScriptState } from '../types';
 import { asciiGrid, buildScriptState } from '../game/observe';
-import { createGame, disqualify, evaluateEnd, queueDirection, step, type GameEvent, type GameState } from '../game/engine';
+import { createGame, disqualify, evaluateEnd, queueDirection, step, type GameState } from '../game/engine';
 import { ENGINE_VERSION } from './config';
 
 const symbols: Record<string, Direction> = { U: 'up', D: 'down', L: 'left', R: 'right' };
@@ -16,15 +16,13 @@ function newGame(replay: Replay): GameState {
   });
 }
 
-function applyDisqualifications(game: GameState, replay: Replay, phase: 'init' | 'move'): GameEvent[] {
-  const eventCount = game.events.length;
+function applyDisqualifications(game: GameState, replay: Replay, phase: 'init' | 'move'): void {
   for (const item of replay.disqualifications ?? []) {
     if (item.tick === game.tick && (item.phase ?? (item.tick === 0 ? 'init' : 'move')) === phase) {
       disqualify(game, item.slot, { deferEnd: true });
     }
   }
   evaluateEnd(game);
-  return game.events.slice(eventCount);
 }
 
 function applyNext(game: GameState, replay: Replay, encoded: string): void {
@@ -52,18 +50,16 @@ function frame(game: GameState): Frame {
 export function replayFrames(replay: Replay): Frame[] {
   const game = newGame(replay);
   applyDisqualifications(game, replay, 'init');
+  // Frames include decisions that disqualify a snake at this tick, even when
+  // other snakes survive and the next engine step will still be taken.
+  applyDisqualifications(game, replay, 'move');
   const frames: Frame[] = [frame(game)];
   for (const move of replay.moves) {
-    const deaths = applyDisqualifications(game, replay, 'move');
     if (game.status === 'ended') throw new Error('Replay contains moves after match ended');
     applyNext(game, replay, move);
-    game.events.unshift(...deaths);
+    applyDisqualifications(game, replay, 'move');
     frames.push(frame(game));
   }
-  // A move failure may end a match without taking another engine step. The
-  // terminal frame at that tick must still show the disqualified snakes.
-  applyDisqualifications(game, replay, 'move');
-  frames[frames.length - 1] = frame(game);
   return frames;
 }
 
@@ -72,10 +68,10 @@ export function frameState(replay: Replay, tick: number, viewerSlot: number): { 
   if (!replay.players.some((player) => player.slot === viewerSlot)) throw new RangeError('Unknown replay viewer slot');
   const game = newGame(replay);
   applyDisqualifications(game, replay, 'init');
+  applyDisqualifications(game, replay, 'move');
   for (let i = 0; i < tick; i++) {
-    applyDisqualifications(game, replay, 'move');
     applyNext(game, replay, replay.moves[i]!);
+    applyDisqualifications(game, replay, 'move');
   }
-  if (tick === replay.moves.length) applyDisqualifications(game, replay, 'move');
   return { ascii: asciiGrid(game, viewerSlot), state: buildScriptState(game, viewerSlot) };
 }

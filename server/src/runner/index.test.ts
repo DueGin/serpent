@@ -120,6 +120,14 @@ test('fifty consecutive invalid decisions keep direction then disqualify without
   assert.ok(result.participants.every((participant) => participant.invalidMoves === 50));
   assert.ok(result.participants.every((participant) => participant.deathReason === 'disqualified'));
   assert.ok(result.replay.moves.every((move) => move === 'RL'));
+  for (const participant of result.participants) {
+    assert.equal(participant.deathTick, 49);
+    const frames = replayFrames(result.replay);
+    assert.equal(frames[48]!.snakes[participant.slot]!.alive, true);
+    assert.equal(frames[49]!.snakes[participant.slot]!.alive, false);
+    assert.equal(frames[49]!.events.filter((event) => event.type === 'die' && event.slot === participant.slot).length, 1);
+    assert.equal(frameState(result.replay, participant.deathTick!, participant.slot).state.you.alive, false);
+  }
   assertReplay(result);
 });
 
@@ -129,10 +137,33 @@ test('mid-match disqualification preserves replay with surviving participants', 
   ], captureLogs: false });
   assert.equal(result.participants[0]!.deathReason, 'disqualified');
   assert.equal(result.participants[0]!.logs, undefined);
+  const deathTick = result.participants[0]!.deathTick!;
+  const frames = replayFrames(result.replay);
+  assert.equal(deathTick, 49);
+  assert.ok(result.ticks > deathTick);
+  assert.equal(frames[deathTick - 1]!.snakes[0]!.alive, true);
+  assert.equal(frames[deathTick]!.snakes[0]!.alive, false);
+  assert.equal(frameState(result.replay, deathTick, 0).state.you.alive, false);
+  assert.equal(frames[deathTick]!.events.filter((event) => event.type === 'die' && event.slot === 0).length, 1);
+  assert.equal(frames[deathTick + 1]!.events.some((event) => event.type === 'die' && event.slot === 0), false);
   assert.ok(result.replay.moves.slice(49).every((move) => move[0] === '.'));
   assert.equal(replayFrames(result.replay).flatMap((frame) => frame.events)
     .filter((event) => event.type === 'die' && event.slot === 0).length, 1);
   assertReplay(result);
+});
+
+test('tick-zero move disqualifications use the same frame semantics as init failures', () => {
+  const config = defaultConfig('score', { seed: 22, maxTicks: 1, players: 2 });
+  const replay = {
+    v: 1 as const, engine: 'serpent-engine-2', config,
+    players: [0, 1].map((slot) => ({ slot, name: `s${slot}`, team: null, color: '#ffffff' })),
+    moves: ['.L'], disqualifications: [{ tick: 0, slot: 0, phase: 'move' as const }],
+  };
+  const frames = replayFrames(replay);
+  assert.equal(frames[0]!.snakes[0]!.alive, false);
+  assert.equal(frameState(replay, 0, 0).state.you.alive, false);
+  assert.equal(frames[0]!.events.filter((event) => event.type === 'die' && event.slot === 0).length, 1);
+  assert.equal(frames[1]!.events.some((event) => event.type === 'die' && event.slot === 0), false);
 });
 
 test('timeouts keep heading and count separately before consecutive failure disqualification', async () => {

@@ -7,7 +7,7 @@
 - Bot：greedy/coward/random，所有 Bot 不消耗食物 RNG；random 独立派生种子。
 - 观察：`buildInitInfo` / `buildScriptState` / `asciiGrid`，包括死亡位置、legalMoves、独立克隆的输入。
 - 沙箱：QuickJS 每选手独立 runtime，32MB 默认内存、256KB 栈、init/move interrupt deadline、200 行/500 字日志上限、JSON 安全化、同步接口与模块导出、确定性 Math.random / Date。宿主不读取任意 guest 对象属性，恶意 getter、序列化与错误均在 VM 内处理。
-- Runner：worker_threads 池（默认 min(4,cpus-1)，`RUNNER_WORKERS` 可配）、作业硬超时（`RUNNER_JOB_TIMEOUT_MS`，默认 180000）、崩溃自动重建、并发 shutdown、安全清理。
+- Runner：worker_threads 池（默认 min(4,cpus-1)，`RUNNER_WORKERS` 可配）、作业硬超时（`RUNNER_JOB_TIMEOUT_MS`，默认 180000）、有界输入/队列/等待时间、启动失败退避/熔断、按需崩溃恢复、并发 shutdown、安全清理。
 - 检测：9 个固定检测项；8 个场景（含真实引擎验证的唯一出口）；3 seed solo 与 battle 迷你模拟（每局 100 tick）；dry-run、逐帧回放和 ASCII 复盘。
 - 失格：init 错误/超时、连续 50 次失败、累计 CPU 超限。所有选手看到相同拍前局面，失格在拍内原子应用；错误/超时/非法/掉头均保持原方向，不做贪心兜底。
 
@@ -30,7 +30,7 @@ const result = await simulate({
     { slot: 1, name: '贪心', team: null, source: { kind: 'builtin', bot: 'greedy' } },
   ],
 });
-const frames = replayFrames(result.replay); // tick 0 是初始帧
+const frames = replayFrames(result.replay); // tick 0 含初始阶段/该 tick 的失格
 const view = frameState(result.replay, result.ticks, 0); // {ascii,state}
 await shutdownRunner(); // 进程退出/测试结束时调用，可再次启动池
 ```
@@ -44,8 +44,8 @@ await shutdownRunner(); // 进程退出/测试结束时调用，可再次启动�
 `Replay.disqualifications?: Array<{tick:number;slot:number;phase?:'init'|'move'}>` 是兼容新增字段；UDLR 的 moves 无法编码失格。
 
 - tick 是调用脚本前的已走步数。
-- init 失格在初始帧前应用；move 失格在下一引擎 step 前应用。
-- move 失格直接终局时不新增 tick，最后一帧覆盖为失格终态；否则死亡事件只出现在下一帧一次。
+- 每帧 tick N 表示已经走 N 步、且已应用 tick N 的 init/move 失格、尚未走下一步的状态。`frameState` 使用同一语义。
+- init 失格在初始帧前应用；move 失格同样在所记录 tick 的帧内显示（无论是否终局），不新增 tick；die 事件只在死亡 tick 出现一次。
 - 回放不执行用户脚本，使用保存的方向与失格事件，故不受执行耗时变化影响。
 
 ## 验证与性能
@@ -93,3 +93,45 @@ await shutdownRunner(); // 进程退出/测试结束时调用，可再次启动�
 - 最后全量 server 测试在其他 worker 新文件落盘后为 115 项；串行运行 **112 pass / 3 fail**，失败均为 MCP 归属：flood-fill 对 greedy 固定六局 6:6（要求严格胜出）、rules 文档缺测试要求的“尸体”文字（及父 suite 失败）。core 与 platform 项均通过，已将日志 `/tmp/serpent-core-serial-full.log` 和归属通知协调者；未修改其他 worker 文件。
 - 并行全量曾因 50ms 软预算下高 CPU 争抢导致示例 timeout，串行后全部示例 validate 通过。全局 `server tsc --noEmit` 等待超过 2 分钟无输出，已停止自己启动的该次编译，保留其他 worker 的进程；需 MCP 类型复杂度问题最终收口。
 - core 已完成并停止编辑，无待实现的 core API；强实时软中断限制如前述，不能据此宣称逐拍绝对 50ms 强终止。
+
+## 交叉审查修复（完成）
+
+- 已只读审查 platform；2 条高置信发现与真实复现数据见 `docs/arena/status/review-platform.md`，已通知协调者；未改 platform 实现。
+- 已修复非终局失格回放错拍：`replayFrames` / `frameState` 在全部 tick 应用同 tick 的失格，终局和非终局统一；回归验证 tick49 的 alive=false、die 事件和 ParticipantResult.deathTick 一致，tick48存活、tick50不再重复die。新增 tick0 move失格案例。
+- 沙箱返回值限制：数组只复制前 128 个元素，忽略非索引属性，不保留原稀疏 length；递归预算 500 节点/8 层/单串 5000 字符。整个 raw JSON envelope 限制 **65536 UTF-8 字节**，包含转义、键、值、标点；VM 内计费，宿主再次复核。超限、任何错误或超时一律返回 raw=null、direction=null。日志仍独立受每局 200 行/每行 500 字符上限约束，不计入 raw envelope。
+- 队列/输入限制：默认全局 **64 个未完成作业（含执行中）**，对应 JSON UTF-8 输入合计 **8MiB**；排队最多 **30000ms**。可配置 `RUNNER_QUEUE_MAX_JOBS`、`RUNNER_QUEUE_MAX_BYTES`、`RUNNER_QUEUE_TIMEOUT_MS`。满载/字节超限立即拒绝；等待到期移除并拒绝，完成/拒绝/shutdown 清理占用与定时器，不影响执行中作业。
+- worker 加载入口后发送 ready 握手，启动期限 10000ms；启动失败按 100ms 指数退避、封顶 2000ms，连续 5 次失败后熔断 30000ms；只在存在等待作业时创建/重试，空队列不主动探测，shutdown 清全部重试/启动/排队/作业计时器。已 ready 的作业崩溃仅拒绝本作业，后续按需恢复，不误计为入口启动失败。
+
+### 新增错误接口（供 platform 映射）
+
+```ts
+import { RunnerBusyError, RunnerUnavailableError } from './runner';
+// RunnerBusyError: code === 'RUNNER_BUSY'
+// reason: 'queue_full' | 'queue_bytes' | 'queue_timeout'
+// 建议映射为 AppError('RATE_LIMITED', ...)，HTTP 429。
+// RunnerUnavailableError: code === 'RUNNER_UNAVAILABLE'
+// retryAfterMs: 熔断剩余毫秒数。建议 503；若保持契约现有错误集则 INTERNAL 500。
+```
+
+- 错误只描述池状态，不包含脚本输入；入口启动失败 detail 可能含本机入口路径，应由 platform 使用固定公开错误信息，不向访客原样展示。
+- 原 simulate/validateScript/dryRun/shutdownRunner 签名不变。RunnerPool 导出用于故障注入测试，生产调用不需要自行创建池。
+
+### 修复实测与回归
+
+| 场景 | 实测 |
+|---|---|
+| 1000 个不同 65KB 输入、默认容量、故障入口 | 936 项立即 RUNNER_BUSY；64 项保留，5 次启动失败后全部 RUNNER_UNAVAILABLE |
+| 故障恢复 | 约 1519ms 熔断；额外空闲 500ms，创建次数仍为 5；pendingJobs/pendingBytes/queue/workers 均为 0，retryScheduled=false |
+| 稀疏数组索引 3000000 | raw 数组 length=128；raw 664B，完整 dry-run 748B，约 2.084ms（修复前约 15MB） |
+| 嵌套 12x5000 ASCII 字符 | 正常 raw 60076B，完整 dry-run 60161B |
+| 嵌套 40x5000 ASCII 字符 | 字节预算拒绝，raw=null，完整 dry-run 145B，约 17.949ms |
+| soft timeout | raw=null，完整 dry-run 114B |
+| 非终局/终局 move 失格 | 同为 deathTick=49；frame49 dead+die，frameState49 dead；非终局 frame50 无重复 die |
+| 修复后 4 BFS / seed132 / 1000tick | 模拟 668.486ms，含 worker 启动 721ms，3050 moves，errors/timeouts/invalidMoves 均为 0 |
+
+- 新增 17 项回归：pool 从 3 项增至 13 项（数量/字节/等待截止/启动失败/熔断/空队列/shutdown/hung startup/混合失败恢复/配置小数边界），sandbox 新增 serialization.test.ts 6 项（稀疏数组、嵌套/转义/Unicode、超限、timeout raw、真实 worker 大小），runner 增加 tick0失格并强化终局/非终局逐帧断言。
+- Core 最终全部 **77/77 通过**，7.07s；日志 `/tmp/serpent-core-review-fixes-final.log`。
+- `LADDER_AUTO=0 RUNNER_WORKERS=2 pnpm --filter server test` 全量 **130/130 通过**，15.12s；日志 `/tmp/serpent-core-review-full.log`。
+- 补上 pool 最后两个边缘回归后再跑全量：132 项 131 pass / 1 fail；唯一失败是并行 platform 正将 DB schema 升级 v2，而 `auth.test.ts:62` 仍断言 user_version=1（实际2），已通知协调者，未修改他人文件。日志 `/tmp/serpent-core-review-full-final.log`。全部 core 项均通过。
+- Core strict 定向 TypeScript 检查通过；**全量 server `tsc --noEmit` 两轮通过**（约 6.9s / 4.1s），先前 MCP 类型复杂度阻塞已不再出现。
+- 未执行 git 写操作；未修改 package.json 或 platform 实现。QuickJS C/GC 软中断延迟的已知限制仍如前述，不宣称逐拍绝对 50ms 强实时。

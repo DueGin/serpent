@@ -88,6 +88,7 @@ export interface FrameSnake {
   length: number;
 }
 export interface FrameEvent { type: 'eat' | 'die' | 'win'; slot?: number; message: string }
+// Tick N includes that tick's disqualifications, before the next engine step.
 export interface Frame { tick: number; snakes: FrameSnake[]; foods: Point[]; events: FrameEvent[] }
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
