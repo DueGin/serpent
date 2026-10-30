@@ -5,6 +5,8 @@ import type { AgentDTO, CheckReport, ScriptLanguage, ScriptVisibility } from '..
 import { errorMessage, SCRIPT_LANGUAGE_LABEL } from '../utils';
 import { EmptyState } from './StateView';
 
+const SCRIPT_LANGUAGES: ScriptLanguage[] = ['javascript', 'python'];
+
 export function ScriptCreatePanel({ agents, onCreated }: { agents: AgentDTO[]; onCreated: () => void }) {
   const navigate = useNavigate();
   const [agentId, setAgentId] = useState(0);
@@ -104,7 +106,7 @@ export function ScriptCreatePanel({ agents, onCreated }: { agents: AgentDTO[]; o
             <fieldset className="script-language-field" disabled={busy !== ''}>
               <legend>脚本语言（创建后不可改）</legend>
               <div className="script-language-options" role="group" aria-label="脚本语言">
-                {(['javascript', 'python'] as ScriptLanguage[]).map((item) => (
+                {SCRIPT_LANGUAGES.map((item) => (
                   <button
                     type="button"
                     key={item}
