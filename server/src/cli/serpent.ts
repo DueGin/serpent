@@ -77,7 +77,9 @@ async function request(route: string, init: { method?: string; body?: unknown; a
 }
 
 function readCode(file: string): string {
-  return fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+  // pnpm --filter 会把 cwd 切到 server/，相对路径按用户调用处解析（INIT_CWD）
+  const base = process.env.INIT_CWD || process.cwd();
+  return fs.readFileSync(path.resolve(base, file), 'utf8');
 }
 
 function listScripts(): Promise<unknown> {
