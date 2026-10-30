@@ -8,7 +8,10 @@ import { arenaEvents } from '../realtime';
 import type * as DTO from '../api-types';
 import type { BuiltinBot, MatchConfig } from '../types';
 import { mustOwnAgent, ownsAgent, type Principal } from './principal';
-import { activeMatchCount, createInternalMatch, type InternalParticipant } from './matches';
+import { activeMatchCount, createInternalMatch, waitPendingMatches, type InternalParticipant } from './matches';
+import { validateTeamEntry, validateTeamLineup } from './lineups';
+import { assertRunning, lifecycle, lifecycleActive, startLifecycle, type Lifecycle } from './lifecycle';
+import { waitScriptChecks } from './script-limits';
 
 type Row = Record<string, any>;
 const initialMu = 25, initialSigma = 25 / 3;
@@ -64,17 +67,6 @@ function validScript(scriptId: number, db = getDb()): Row {
   if (s.status !== 'valid') throw new AppError('VALIDATION_ERROR', '参赛脚本必须有检测通过的生效版本');
   return s;
 }
-function validLineup(p: Principal, teamId: number, lineup: [number, number], db = getDb()): void {
-  const team = db.prepare('SELECT * FROM teams WHERE id=? AND disbanded=0').get(teamId) as Row | undefined;
-  if (!team) throw new AppError('NOT_FOUND', '队伍不存在');
-  mustOwnAgent(p, team.captain_agent_id);
-  if (!Array.isArray(lineup) || lineup.length !== 2 || lineup[0] === lineup[1]) throw new AppError('VALIDATION_ERROR', '阵容必须由两个不同成员的脚本组成');
-  const scripts = lineup.map((id) => validScript(id, db));
-  if (scripts[0].agent_id === scripts[1].agent_id) throw new AppError('VALIDATION_ERROR', '阵容需要两位不同 Agent');
-  for (const script of scripts) {
-    if (!db.prepare('SELECT 1 FROM team_members WHERE team_id=? AND agent_id=?').get(teamId, script.agent_id)) throw new AppError('FORBIDDEN', '阵容脚本必须属于当前队伍成员');
-  }
-}
 function entryLimit(agentId: number, ladderId: number, exceptId?: number): void {
   const n = getDb().prepare('SELECT count(*) AS n FROM ladder_entries WHERE agent_id=? AND ladder_id=? AND active=1 AND id!=?').get(agentId, ladderId, exceptId ?? -1) as Row;
   if (n.n >= 3) throw new AppError('LIMIT_EXCEEDED', '每个 Agent 在同一天梯最多有 3 个入场');
@@ -97,6 +89,7 @@ export async function leaderboard(slug: string, filter: { by?: 'entry' | 'agent'
 }
 export async function join(p: Principal, slug: string, input: { scriptId: number } | { teamId: number; lineup: [number, number] }): Promise<DTO.LadderEntryDTO> {
   const db = getDb(), ladder = ladderRow(slug), now = Date.now();
+  assertRunning(db);
   let id: number;
   if ('scriptId' in input) {
     if (ladder.kind === 'team') throw new AppError('VALIDATION_ERROR', '团队天梯需要队伍与阵容');
@@ -107,7 +100,7 @@ export async function join(p: Principal, slug: string, input: { scriptId: number
     else { const info = db.prepare("INSERT INTO ladder_entries(ladder_id,entrant_type,script_id,agent_id,mu,sigma,rating,joined_at,updated_at) VALUES(?,'script',?,?,?,?,?,?,?)").run(ladder.id, script.id, script.agent_id, initialMu, initialSigma, ladder.kind === 'solo' ? 0 : 1000, now, now); id = Number(info.lastInsertRowid); }
   } else {
     if (ladder.kind !== 'team') throw new AppError('VALIDATION_ERROR', '此天梯只接受个人脚本');
-    validLineup(p, input.teamId, input.lineup);
+    validateTeamLineup(p, input.teamId, input.lineup, db);
     const existing = db.prepare('SELECT id FROM ladder_entries WHERE ladder_id=? AND team_id=?').get(ladder.id, input.teamId) as Row | undefined;
     if (existing) {
       id = existing.id;
@@ -117,6 +110,8 @@ export async function join(p: Principal, slug: string, input: { scriptId: number
         .run(JSON.stringify(input.lineup), sigma, Math.round(1000 + 40 * (old.mu - 3 * sigma)), now, id);
     }
     else { const info = db.prepare("INSERT INTO ladder_entries(ladder_id,entrant_type,team_id,lineup_json,joined_at,updated_at) VALUES(?,'team',?,?,?,?)").run(ladder.id, input.teamId, JSON.stringify(input.lineup), now, now); id = Number(info.lastInsertRowid); }
+    db.prepare('UPDATE ladder_entries SET authorized_user_id=?,authorized_agent_id=?,inactive_reason=NULL WHERE id=?')
+      .run(p.userId, p.kind === 'agent' ? p.agentId : null, id);
   }
   if (ladder.kind === 'solo' && entryRow(id, db).avg_score === null) scheduleBenchmark(id, db);
   arenaEvents.emit('ladder:updated', { slug });
@@ -141,7 +136,7 @@ export async function updateEntry(p: Principal, slug: string, entryId: number, p
   } else {
     if (patch.scriptId !== undefined) throw new AppError('VALIDATION_ERROR', '团队入场需要更新阵容');
     const selected = patch.lineup ?? JSON.parse(row.lineup_json);
-    if (patch.active !== false) validLineup(p, row.team_id, selected);
+    if (patch.lineup !== undefined || (patch.active ?? !!row.active)) validateTeamLineup(p, row.team_id, selected, db);
     lineup = JSON.stringify(selected);
   }
   const changed = scriptId !== row.script_id || lineup !== row.lineup_json;
@@ -149,6 +144,10 @@ export async function updateEntry(p: Principal, slug: string, entryId: number, p
   const rating = ladder.kind === 'solo' ? row.rating : Math.round(1000 + 40 * (row.mu - 3 * sigma));
   databaseWrite(() => db.prepare('UPDATE ladder_entries SET script_id=?,agent_id=?,lineup_json=?,active=?,sigma=?,rating=?,updated_at=? WHERE id=?')
     .run(scriptId, agentId, lineup, Number(patch.active ?? !!row.active), sigma, rating, Date.now(), entryId));
+  if (row.entrant_type === 'team' && (patch.lineup !== undefined || (patch.active ?? !!row.active))) {
+    db.prepare('UPDATE ladder_entries SET authorized_user_id=?,authorized_agent_id=?,inactive_reason=NULL WHERE id=?')
+      .run(p.userId, p.kind === 'agent' ? p.agentId : null, entryId);
+  }
   if (ladder.kind === 'solo' && changed) db.prepare('UPDATE ladder_entries SET avg_score=NULL,best_score=NULL,avg_ticks=NULL,rating=0 WHERE id=?').run(entryId);
   const updated = entryRow(entryId, db);
   if (ladder.kind === 'solo' && updated.active && updated.avg_score === null) scheduleBenchmark(entryId, db);
@@ -167,11 +166,7 @@ function eligible(row: Row, db: Database.Database): boolean {
   try {
     if (row.entrant_type === 'script') validScript(row.script_id, db);
     if (row.entrant_type === 'team') {
-      const ids = JSON.parse(row.lineup_json || '[]') as number[];
-      if (ids.length !== 2) return false;
-      const scripts = ids.map((id) => validScript(id, db));
-      if (scripts[0].agent_id === scripts[1].agent_id) return false;
-      if (scripts.some((s) => !db.prepare('SELECT 1 FROM team_members WHERE team_id=? AND agent_id=?').get(row.team_id, s.agent_id))) return false;
+      validateTeamEntry(row.id, db);
     }
     return true;
   } catch { return false; }
@@ -184,6 +179,7 @@ function members(row: Row, db: Database.Database): number[] {
 function shuffled<T>(values: T[]): T[] { const a = values.slice(); for (let i = a.length - 1; i > 0; i--) { const j = randomInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function runnerCapacity(): number { return Math.max(1, Math.min(32, Number(process.env.RUNNER_WORKERS) || Math.min(4, Math.max(1, os.availableParallelism() - 1)))); }
 async function scheduleMatch(ladder: Row, requestedId?: number, db = getDb()): Promise<DTO.MatchSummaryDTO> {
+  assertRunning(db);
   if (activeMatchCount(db) >= runnerCapacity()) throw new AppError('RATE_LIMITED', '模拟任务池繁忙，请稍后排队');
   let candidates = (db.prepare('SELECT id FROM ladder_entries WHERE ladder_id=? AND active=1 ORDER BY coalesce(last_match_at,0),games,id').all(ladder.id) as Row[])
     .map(({ id }) => entryRow(id, db)).filter((e) => !busy(db).has(e.id) && eligible(e, db));
@@ -248,6 +244,8 @@ function scheduleBenchmark(entryId: number, db: Database.Database): void {
   track(runBenchmark(entryId, db).catch(() => { console.warn(`[serpent] 单人基准赛未完成 entry=${entryId}`); }));
 }
 function runBenchmark(entryId: number, db: Database.Database): Promise<void> {
+  const generation = lifecycle(db);
+  if (!lifecycleActive(db, generation)) return Promise.resolve();
   const entry = entryRow(entryId, db);
   const versionId = entry.entrant_type === 'script' ? validScript(entry.script_id, db).active_version_id as number : undefined;
   let jobs = benchmarkJobs.get(db);
@@ -260,14 +258,15 @@ function runBenchmark(entryId: number, db: Database.Database): Promise<void> {
   let promise!: Promise<void>;
   promise = (async () => {
     await (current?.promise.catch(() => {}) ?? Promise.resolve());
-    if (db.open && jobs!.get(entryId)?.promise === promise) await executeBenchmark(entryId, db);
+    if (lifecycleActive(db, generation) && jobs!.get(entryId)?.promise === promise) await executeBenchmark(entryId, db, generation);
   })().finally(() => {
     if (jobs!.get(entryId)?.promise === promise) jobs!.delete(entryId);
   });
   jobs.set(entryId, { versionId, promise });
   return promise;
 }
-async function executeBenchmark(entryId: number, db: Database.Database): Promise<void> {
+async function executeBenchmark(entryId: number, db: Database.Database, generation: Lifecycle): Promise<void> {
+  if (!lifecycleActive(db, generation)) return;
   const entry = entryRow(entryId, db);
   if (!entry.active || entry.ladder_kind !== 'solo') throw new AppError('CONFLICT', '单人基准入场不可用');
   let tokens = benchmarkTokens.get(db); if (!tokens) { tokens = new Map(); benchmarkTokens.set(db, tokens); }
@@ -278,21 +277,22 @@ async function executeBenchmark(entryId: number, db: Database.Database): Promise
   const results: Array<{ score: number; ticks: number }> = [];
   try {
     for (const seed of benchmarkSeeds) {
-      if (tokens.get(entryId) !== token || !db.open) return;
+      if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return;
       if (!entryRow(entryId, db).active) return;
       if (entry.entrant_type === 'script') { const current = validScript(entry.script_id, db); if (current.active_version_id !== versionId) return; }
       // Do not turn many solo enrollments into an unbounded worker-pool queue.
       while (activeMatchCount(db) >= runnerCapacity()) {
         await new Promise<void>(resolve => setTimeout(resolve, 25));
-        if (tokens.get(entryId) !== token || !db.open || !entryRow(entryId, db).active) return;
+        if (tokens.get(entryId) !== token || !lifecycleActive(db, generation) || !entryRow(entryId, db).active) return;
       }
+      if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return;
       const config: MatchConfig = { ...JSON.parse(entry.config_json), seed };
       const match = await createInternalMatch({ kind: 'benchmark', ladderId: entry.ladder_id, config,
         participants: [entry.entrant_type === 'script' ? { scriptId: entry.script_id, versionId, ladderEntryId: entry.id } : { builtin: entry.builtin, ladderEntryId: entry.id }], wait: true, db });
       if (match.status !== 'done') throw new AppError('INTERNAL', '基准赛模拟失败');
       results.push({ score: match.participants[0].score, ticks: match.ticks });
     }
-    if (tokens.get(entryId) !== token || !db.open) return;
+    if (tokens.get(entryId) !== token || !lifecycleActive(db, generation)) return;
     const current = entryRow(entryId, db);
     if (!current.active || (versionId !== undefined && current.active_version_id !== versionId)) return;
     const avgScore = results.reduce((n, r) => n + r.score, 0) / results.length;
@@ -326,17 +326,34 @@ export async function recordMatchResult(matchId: number, db = getDb()): Promise<
 }
 export async function runMatchmakerOnce(): Promise<void> {
   const db = getDb();
+  assertRunning(db);
   const ladders = db.prepare("SELECT * FROM ladders WHERE active=1 AND kind!='solo'").all() as Row[];
   await Promise.all(ladders.map(async (ladder) => { try { await scheduleMatch(ladder, undefined, db); } catch (err) { if (!(err instanceof AppError)) console.warn('[serpent] 天梯匹配失败'); } }));
 }
-export function startMatchmaker(): () => void {
+export function startMatchmaker(): () => Promise<void> {
   const db = getDb();
-  const cancelBenchmarks = () => { benchmarkTokens.get(db)?.clear(); };
-  if (process.env.LADDER_AUTO === '0') return cancelBenchmarks;
+  const generation = startLifecycle(db);
+  let timer: NodeJS.Timeout | undefined;
+  let stopped: Promise<void> | undefined;
+  const stop = (): Promise<void> => {
+    if (!stopped) {
+      generation.stopping = true;
+      if (timer) clearInterval(timer);
+      benchmarkTokens.get(db)?.clear();
+      stopped = (async () => {
+        while (benchmarkJobs.get(db)?.size) {
+          await Promise.allSettled([...(benchmarkJobs.get(db)?.values() ?? [])].map(job => job.promise));
+        }
+        await Promise.all([waitPendingMatches(db), waitScriptChecks(db)]);
+      })();
+    }
+    return stopped;
+  };
+  if (process.env.LADDER_AUTO === '0') return stop;
   const solos = db.prepare("SELECT e.id FROM ladder_entries e JOIN ladders l ON l.id=e.ladder_id WHERE e.active=1 AND l.kind='solo' AND e.avg_score IS NULL").all() as Row[];
   for (const entry of solos) scheduleBenchmark(entry.id, db);
   let running = false;
-  const timer = setInterval(() => { if (running) return; running = true; track(runMatchmakerOnce().finally(() => { running = false; })); }, Math.max(100, Number(process.env.LADDER_INTERVAL_MS) || 20000));
+  timer = setInterval(() => { if (running || !lifecycleActive(db, generation)) return; running = true; track(runMatchmakerOnce().finally(() => { running = false; })); }, Math.max(100, Number(process.env.LADDER_INTERVAL_MS) || 20000));
   timer.unref();
-  return () => { clearInterval(timer); cancelBenchmarks(); };
+  return stop;
 }

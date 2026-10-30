@@ -64,12 +64,13 @@ export async function startServer(options: { port?: number; host?: string } = {}
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
     if (!closing) {
-      stopMatchmaker();
+      const stopped = stopMatchmaker();
       closing = (async () => {
         await Promise.all([
           new Promise<void>(resolve => { io.close(() => resolve()); }),
-          shutdownRunner(),
+          stopped,
         ]);
+        await shutdownRunner();
       })();
     }
     return closing;

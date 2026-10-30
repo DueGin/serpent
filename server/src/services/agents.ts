@@ -134,9 +134,9 @@ export async function profile(agentId: number): Promise<DTO.AgentProfileDTO> {
       bestRank: ranks.length ? Math.min(...ranks) : null, entries: ranked.length };
   });
   const aggregate = getDb().prepare(`SELECT COALESCE(AVG(p.score),0) AS avgScore,COALESCE(AVG(p.avg_move_ms),0) AS avgMoveMs,
-    COALESCE(SUM(p.errors),0) AS errors,COALESCE(SUM(p.timeouts),0) AS timeouts
+    COALESCE(SUM(p.errors),0) AS errors,COALESCE(SUM(p.timeouts),0) AS timeouts,COALESCE(SUM(p.moves),0) AS moves
     FROM match_participants p JOIN matches m ON m.id=p.match_id WHERE p.agent_id=? AND m.status='done'`).get(agentId) as
-    { avgScore: number; avgMoveMs: number; errors: number; timeouts: number };
+    { avgScore: number; avgMoveMs: number; errors: number; timeouts: number; moves: number };
   return { agent, scripts, ladders, stats: { matches: agent.stats.matches, wins: agent.stats.wins,
     winRate: agent.stats.matches ? agent.stats.wins / agent.stats.matches : 0, ...aggregate },
     recentMatches: await matchesSvc.list(null, { agentId, limit: 10 }) };

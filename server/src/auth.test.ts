@@ -59,7 +59,7 @@ describe('database migrations', () => {
         INSERT INTO agents VALUES (9,42,'old-agent','https://example.test','enc1:legacy-secret','old prompt');`);
       legacy.close();
       const migrated = openDatabase(file);
-      assert.equal(migrated.pragma('user_version', { simple: true }), 1);
+      assert.equal(migrated.pragma('user_version', { simple: true }), 2);
       assert.equal((migrated.prepare('SELECT username FROM users WHERE id=42').get() as { username: string }).username, 'legacy');
       assert.equal((migrated.prepare('SELECT name FROM agents_legacy WHERE id=9').get() as { name: string }).name, 'old-agent');
       const agentColumns = migrated.pragma('table_info(agents)') as Array<{ name: string }>;
@@ -76,6 +76,33 @@ describe('database migrations', () => {
       const reopened = openDatabase(file);
       assert.equal((reopened.prepare('SELECT COUNT(*) AS count FROM ladder_entries').get() as { count: number }).count, 11);
       reopened.close();
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('upgrades existing v1 entries and pauses teams until their captain reauthorizes', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'serpent-migration-v2-'));
+    const file = path.join(directory, 'arena.db');
+    try {
+      const old = openDatabase(file);
+      old.exec(`ALTER TABLE ladder_entries DROP COLUMN authorized_user_id;
+        ALTER TABLE ladder_entries DROP COLUMN authorized_agent_id;
+        ALTER TABLE ladder_entries DROP COLUMN inactive_reason;
+        PRAGMA user_version=1;
+        INSERT INTO users VALUES(1,'owner','hash',0);
+        INSERT INTO agents(id,user_id,name,api_key_hash,api_key_prefix,created_at,updated_at)
+          VALUES(1,1,'captain','${'a'.repeat(64)}','agk_fixture',0,0);
+        INSERT INTO teams(id,name,captain_agent_id,invite_code,created_at) VALUES(1,'old-team',1,'invite',0);
+        INSERT INTO ladder_entries(ladder_id,entrant_type,team_id,lineup_json,joined_at,updated_at)
+          SELECT id,'team',1,'[1,2]',0,0 FROM ladders WHERE slug='team-battle';`);
+      old.close();
+      const migrated = openDatabase(file);
+      const entry = migrated.prepare("SELECT active,inactive_reason,authorized_user_id FROM ladder_entries WHERE entrant_type='team'").get() as
+        { active: number; inactive_reason: string; authorized_user_id: number | null };
+      assert.equal(migrated.pragma('user_version', { simple: true }), 2);
+      assert.equal(entry.active, 0);
+      assert.match(entry.inactive_reason, /重新确认/);
+      assert.equal(entry.authorized_user_id, null);
+      assert.equal((migrated.prepare("SELECT count(*) AS n FROM ladder_entries WHERE entrant_type='builtin' AND active=1").get() as { n: number }).n, 11);
+      migrated.close();
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
 });
@@ -182,15 +209,15 @@ describe('agent identities and principals', () => {
     for (const [status, rank, score, errors, timeouts] of [['done', 1, 30, 1, 0], ['done', 2, 10, 0, 2], ['error', 1, 900, 30, 10]] as const) {
       const match = getDb().prepare(`INSERT INTO matches(kind,mode,status,seed,config_json,created_at,finished_at)
         VALUES ('exhibition','battle',?,1,'{}',?,?)`).run(status, Date.now(), Date.now());
-      getDb().prepare(`INSERT INTO match_participants(match_id,slot,name,color,agent_id,script_id,rank,score,errors,timeouts,avg_move_ms,first_error,logs_json)
-        VALUES (?,0,'Profiled','#edc748',?,?,?,?,?,?,2,'private-error','[{"tick":0,"text":"private-log"}]')`)
+      getDb().prepare(`INSERT INTO match_participants(match_id,slot,name,color,agent_id,script_id,rank,score,errors,timeouts,moves,avg_move_ms,first_error,logs_json)
+        VALUES (?,0,'Profiled','#edc748',?,?,?,?,?,?,100,2,'private-error','[{"tick":0,"text":"private-log"}]')`)
         .run(match.lastInsertRowid, agent.id, listed, rank, score, errors, timeouts);
     }
     const profile = await agents.profile(agent.id);
     assert.deepEqual(profile.scripts.map((script) => script.id).sort((a, b) => a - b), [listed, open]);
     assert.equal(profile.agent.keyPrefix, undefined);
     assert.deepEqual(profile.agent.stats, { scripts: 3, matches: 2, wins: 1 });
-    assert.deepEqual(profile.stats, { matches: 2, wins: 1, winRate: 0.5, avgScore: 20, avgMoveMs: 2, errors: 1, timeouts: 2 });
+    assert.deepEqual(profile.stats, { matches: 2, wins: 1, winRate: 0.5, avgScore: 20, avgMoveMs: 2, errors: 1, timeouts: 2, moves: 200 });
     assert.equal(profile.ladders[0]?.slug, 'battle');
     assert.equal(profile.ladders[0]?.bestRating, 1350);
     assert.equal(profile.ladders[0]?.bestRank, 1);

@@ -11,6 +11,17 @@ export class AppError extends Error {
     this.status = statuses[code];
   }
 }
+export function runnerError(error: unknown): AppError | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+  if (error.code === 'RUNNER_BUSY' || error.code === 'RUNNER_UNAVAILABLE') {
+    return new AppError('RATE_LIMITED', '模拟任务池繁忙或暂不可用，请稍后重试');
+  }
+  return undefined;
+}
+export async function runnerCall<T>(operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) { throw runnerError(error) ?? error; }
+}
 export function parseInput<T>(schema: ZodType<T>, input: unknown): T {
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw new AppError('VALIDATION_ERROR', parsed.error.issues[0]?.message || '参数不合法');
@@ -26,6 +37,7 @@ export function databaseWrite<T>(operation: () => T): T {
   }
 }
 export function sendError(res: Response, err: unknown): void {
+  err = runnerError(err) ?? err;
   if (err instanceof ZodError) err = new AppError('VALIDATION_ERROR', err.issues[0]?.message || '参数不合法');
   if (!(err instanceof AppError)) {
     const e = err as { code?: string; type?: string };

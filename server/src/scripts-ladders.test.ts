@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, beforeEach, describe, it } from 'node:test';
 import { createUser, getDb, openDatabase, setDb } from './db';
 import { AppError } from './http';
-import { shutdownRunner } from './runner';
+import { defaultConfig, shutdownRunner } from './runner';
 import * as agents from './services/agents';
 import * as scripts from './services/scripts';
 import * as ladders from './services/ladders';
@@ -150,5 +150,57 @@ describe('ladder service', () => {
     assert.equal(our[0].ratingAfter, our[1].ratingAfter);
     await teams.leave(otherAgent, team.id);
     assert.equal(ladders.entryDTO(entry.entryId).active, false);
+  });
+  it('rejects another member private script at both enrollment and lineup update', async () => {
+    const a = await seedScript(agent, 'captain', 'private');
+    const b = await seedScript(otherAgent, 'member', 'private');
+    const team = await teams.create(agent, { name: 'Private lineup' });
+    assert.ok(team.inviteCode);
+    await teams.join(otherAgent, { inviteCode: team.inviteCode });
+    await assert.rejects(ladders.join(agent, 'team-battle', { teamId: team.id, lineup: [a, b] }), rejected('FORBIDDEN'));
+    await assert.rejects(ladders.join(user, 'team-battle', { teamId: team.id, lineup: [a, b] }), rejected('FORBIDDEN'));
+    await scripts.update(otherAgent, b, { visibility: 'listed' });
+    const entry = await ladders.join(agent, 'team-battle', { teamId: team.id, lineup: [a, b] });
+    await scripts.update(otherAgent, b, { visibility: 'private' });
+    await assert.rejects(ladders.updateEntry(agent, 'team-battle', entry.entryId, { lineup: [a, b] }), rejected('FORBIDDEN'));
+    await assert.rejects(ladders.updateEntry(user, 'team-battle', entry.entryId, { active: true }), rejected('FORBIDDEN'));
+    await assert.rejects(ladders.queue(agent, 'team-battle', entry.entryId), rejected('CONFLICT'));
+    const paused = getDb().prepare('SELECT active,inactive_reason FROM ladder_entries WHERE id=?').get(entry.entryId) as
+      { active: number; inactive_reason: string };
+    assert.equal(paused.active, 0);
+    assert.match(paused.inactive_reason, /私有脚本/);
+    assert.equal((getDb().prepare('SELECT count(*) AS n FROM match_participants WHERE script_id=?').get(b) as { n: number }).n, 0);
+  });
+  it('rechecks internal matches and pauses revoked lineups before creating any record', async () => {
+    const a = await seedScript(agent, 'captain'), b = await seedScript(otherAgent, 'member');
+    const team = await teams.create(agent, { name: 'Revoked lineup' });
+    assert.ok(team.inviteCode);
+    await teams.join(otherAgent, { inviteCode: team.inviteCode });
+    const entry = await ladders.join(agent, 'team-score', { teamId: team.id, lineup: [a, b] });
+    await scripts.update(otherAgent, b, { visibility: 'private' });
+    const ladder = getDb().prepare("SELECT id FROM ladders WHERE slug='team-score'").get() as { id: number };
+    await assert.rejects(matches.createInternalMatch({ kind: 'ladder', ladderId: ladder.id,
+      config: defaultConfig('score', { teams: true, maxTicks: 1 }), participants: [
+        { scriptId: a, ladderEntryId: entry.entryId, teamId: team.id }, { builtin: 'greedy' },
+        { scriptId: b, ladderEntryId: entry.entryId, teamId: team.id }, { builtin: 'coward' },
+      ], wait: true }), rejected('CONFLICT'));
+    assert.equal(ladders.entryDTO(entry.entryId).active, false);
+    assert.equal((getDb().prepare('SELECT count(*) AS n FROM matches').get() as { n: number }).n, 0);
+  });
+  it('retains user authorization for two owned private scripts but never extends an Agent Key', async () => {
+    const sibling = await agents.create(user, { name: 'Sibling' });
+    const siblingPrincipal: Principal = { kind: 'agent', agentId: sibling.id, userId: user.userId };
+    const a = await seedScript(agent, 'captain', 'private'), b = await seedScript(siblingPrincipal, 'sibling', 'private');
+    const team = await teams.create(agent, { name: 'Same owner' });
+    assert.ok(team.inviteCode);
+    await teams.join(siblingPrincipal, { inviteCode: team.inviteCode });
+    await assert.rejects(ladders.join(agent, 'team-score', { teamId: team.id, lineup: [a, b] }), rejected('FORBIDDEN'));
+    const entry = await ladders.join(user, 'team-score', { teamId: team.id, lineup: [a, b] });
+    getDb().prepare("UPDATE ladders SET config_json=json_set(config_json,'$.maxTicks',1) WHERE slug='team-score'").run();
+    const match = await ladders.queue(user, 'team-score', entry.entryId);
+    assert.equal(match.status, 'done');
+    assert.equal(match.participants.filter(p => p.teamId === team.id).length, 2);
+    await assert.rejects(ladders.updateEntry(agent, 'team-score', entry.entryId, { active: true }), rejected('FORBIDDEN'));
+    assert.equal(ladders.entryDTO(entry.entryId).active, true);
   });
 });

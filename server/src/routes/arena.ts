@@ -66,8 +66,8 @@ export function createArenaRouter(): Router {
     noInput(req); res.json({ data: await scriptsSvc.scenarios() });
   }));
   router.post('/scripts/validate', asyncRoute(async (req, res) => {
-    await principal(req); schema.emptySchema.parse(req.query);
-    res.json(await scriptsSvc.validate(schema.validateSchema.parse(req.body).code));
+    const p = await principal(req); schema.emptySchema.parse(req.query);
+    res.json(await scriptsSvc.validate(schema.validateSchema.parse(req.body).code, p));
   }));
   router.post('/scripts/dry-run', asyncRoute(async (req, res) => {
     const p = await principal(req); schema.emptySchema.parse(req.query);

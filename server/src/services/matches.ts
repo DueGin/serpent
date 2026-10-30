@@ -2,13 +2,15 @@ import { randomBytes } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import type Database from 'better-sqlite3';
 import { getDb } from '../db';
-import { AppError } from '../http';
+import { AppError, runnerError } from '../http';
 import { arenaEvents } from '../realtime';
 import * as runner from '../runner';
 import { COLORS, PLAYBACK_TICK_MS } from '../types';
 import type { BuiltinBot, MatchConfig, MatchKind, ParticipantInput, Replay, SimulateResult } from '../types';
 import type * as DTO from '../api-types';
 import { resolveAgent, type Principal } from './principal';
+import { validateTeamEntry } from './lineups';
+import { assertRunning } from './lifecycle';
 
 type Db = Database.Database;
 type MatchRow = {
@@ -221,10 +223,12 @@ async function runMatch(db: Db, id: number, kind: MatchKind, config: MatchConfig
       const ladders = await import('./ladders');
       await ladders.recordMatchResult(id, db);
     }
-  } catch {
+  } catch (error) {
     // Worker errors may contain source code or internals; do not expose them publicly.
     if (db.open) db.prepare(`UPDATE matches SET status='error',error=?,finished_at=?,broadcast_at=NULL
       WHERE id=?`).run('对局执行失败，请稍后重试', Date.now(), id);
+    const admissionError = runnerError(error);
+    if (admissionError) throw admissionError;
     return;
   }
   // Notifications must not turn an already persisted result into an execution failure.
@@ -245,6 +249,7 @@ function startMatch(db: Db, id: number, kind: MatchKind, config: MatchConfig, pa
     if (!jobs!.size) pending.delete(db);
   });
   jobs.set(id, task);
+  void task.catch(() => {});
   return task;
 }
 
@@ -254,12 +259,13 @@ export async function waitPendingMatches(db?: Db): Promise<void> {
   for (;;) {
     const jobs = db ? [...(pending.get(db)?.values() ?? [])] : [...pending.values()].flatMap(group => [...group.values()]);
     if (!jobs.length) return;
-    await Promise.all(jobs);
+    await Promise.allSettled(jobs);
   }
 }
 
 export async function create(p: Principal, input: DTO.CreateMatchInput): Promise<DTO.MatchDetailDTO> {
   const db = getDb();
+  assertRunning(db);
   if (!p || !['user', 'agent'].includes(p.kind)) throw new AppError('UNAUTHORIZED', '请先登录');
   if (!['test', 'exhibition'].includes(input.kind)) throw new AppError('VALIDATION_ERROR', '只能创建测试赛或表演赛');
   if (!Array.isArray(input.participants)) throw new AppError('VALIDATION_ERROR', '请提供参赛者');
@@ -285,6 +291,7 @@ export async function create(p: Principal, input: DTO.CreateMatchInput): Promise
 
 export async function createInternalMatch(input: InternalMatchInput): Promise<DTO.MatchDetailDTO> {
   const db = input.db ?? getDb();
+  assertRunning(db);
   validateShape(input.config.mode, input.config.teams, input.participants.length);
   validInteger(input.seed, 0, 0xffff_ffff, '种子');
   const config = { ...input.config, seed: input.seed ?? input.config.seed };
@@ -292,6 +299,20 @@ export async function createInternalMatch(input: InternalMatchInput): Promise<DT
   if (!ladder) throw new AppError('NOT_FOUND', '天梯不存在或已停用');
   if (ladder.mode !== config.mode || !!ladder.teams !== config.teams) throw new AppError('VALIDATION_ERROR', '对局配置与天梯不一致');
   if ((input.kind === 'benchmark') !== (config.mode === 'solo')) throw new AppError('VALIDATION_ERROR', '基准赛只能使用单人模式');
+  if (config.teams) {
+    const verified = new Map<number, ReturnType<typeof validateTeamEntry>>();
+    for (const ref of input.participants) {
+      if (ref.builtin !== undefined) continue;
+      if (ref.ladderEntryId === undefined) throw new AppError('FORBIDDEN', '团队脚本必须使用已授权的天梯阵容');
+      let scripts = verified.get(ref.ladderEntryId);
+      if (!scripts) { scripts = validateTeamEntry(ref.ladderEntryId, db); verified.set(ref.ladderEntryId, scripts); }
+      const entry = db.prepare('SELECT team_id FROM ladder_entries WHERE id=?').get(ref.ladderEntryId) as { team_id: number };
+      if (ref.teamId !== entry.team_id || !scripts.some(script => script.id === ref.scriptId &&
+        (ref.versionId === undefined || script.active_version_id === ref.versionId))) {
+        throw new AppError('FORBIDDEN', '参赛脚本或版本不属于当前授权阵容');
+      }
+    }
+  }
   const participants = input.participants.map((ref, slot) => resolveParticipant(db, ref, slot, config.teams, null, true));
   for (const participant of participants) {
     if (participant.ladderEntryId !== null) {

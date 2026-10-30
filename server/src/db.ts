@@ -38,7 +38,7 @@ export interface TeamRow {
 }
 
 let db: Database.Database | null = null;
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export function getDb(): Database.Database {
   if (!db) db = openDatabase(config.dbPath);
@@ -59,12 +59,24 @@ export function openDatabase(file: string): Database.Database {
     const version = instance.pragma('user_version', { simple: true }) as number;
     if (version > SCHEMA_VERSION) throw new Error('Database schema is newer than this server');
     if (version < 1) instance.transaction(() => migrateV1(instance))();
+    if (version < 2) instance.transaction(() => migrateV2(instance))();
     instance.transaction(() => seedLadders(instance))();
     return instance;
   } catch (err) {
     instance.close();
     throw err;
   }
+}
+
+function migrateV2(instance: Database.Database): void {
+  instance.exec(`
+    ALTER TABLE ladder_entries ADD COLUMN authorized_user_id INTEGER REFERENCES users(id);
+    ALTER TABLE ladder_entries ADD COLUMN authorized_agent_id INTEGER REFERENCES agents(id);
+    ALTER TABLE ladder_entries ADD COLUMN inactive_reason TEXT;
+    UPDATE ladder_entries SET active=0,inactive_reason='阵容授权需要队长重新确认'
+      WHERE entrant_type='team';
+    PRAGMA user_version = 2;
+  `);
 }
 
 function migrateV1(instance: Database.Database): void {
