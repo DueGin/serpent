@@ -141,3 +141,17 @@ test('score head contests and same-cell teammates follow survival collision rule
   assert.equal(a.alive, true); assert.equal(mate.alive, true);
   assert.deepEqual(a.body[0], mate.body[0]);
 });
+
+test('body collisions use post-move bodies regardless of slot order', () => {
+  // O 的头撞上 P 的身体而死；S 的头走进 O 本拍让出的尾格。O 已经移动，所以按移动后的
+  // 身体判定：尾格已让出，S 存活。交换 S 与 O 的 slot 编号，结果必须相同。
+  for (const [s, o, p] of [[0, 1, 2], [2, 1, 0], [1, 2, 0], [0, 2, 1]] as const) {
+    const state = game('battle', 3, false, []);
+    const other = pose(state, o, [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }], 'right');
+    pose(state, p, [{ x: 11, y: 9 }, { x: 11, y: 10 }, { x: 11, y: 11 }, { x: 11, y: 12 }], 'up');
+    const mover = pose(state, s, [{ x: 8, y: 9 }, { x: 8, y: 8 }, { x: 8, y: 7 }], 'down');
+    step(state);
+    assert.equal(other.deathReason, 'snake', `slots ${s}/${o}/${p}`);
+    assert.equal(mover.alive, true, `slots ${s}/${o}/${p}`);
+  }
+});

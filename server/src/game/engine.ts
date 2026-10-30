@@ -391,9 +391,11 @@ function stepSurvival(state: GameState): GameState {
         if (other.slot === snake.slot || teammate(state, snake, other)) continue;
         // Only this winner may pass through its defeated opponent's neck/body.
         if (headWinners.get(snake.slot)?.has(other.slot)) continue;
-        const otherDeath = deaths.get(other.slot);
-        const body = otherDeath ? other.body : (nextBodies.get(other.slot) ?? other.body);
-        const hit = (otherDeath ? body : body.slice(1)).some((part) => pointsEqual(part, head));
+        // Every snake that moved blocks with its post-move body, even if it dies this
+        // tick; only a boundary casualty, which never moved, blocks with its old body.
+        // Deciding by "already marked dead" would make the result depend on slot order.
+        const moved = nextBodies.get(other.slot);
+        const hit = (moved ? moved.slice(1) : other.body).some((part) => pointsEqual(part, head));
         if (hit) { deaths.set(snake.slot, { reason: 'snake', killer: other.slot }); break; }
       }
     }
