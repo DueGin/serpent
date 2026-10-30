@@ -56,7 +56,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
           flavor: |
-            latest=${{ github.ref_type == 'tag' }}
+            latest=${{ github.ref_type == 'tag' && 'true' || 'false' }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -69,7 +69,8 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.ref_type == 'tag' || inputs.push }}
+          # build-push-action 的 push 只接受字符串 'true'/'false'；布尔表达式会被拒绝。
+          push: ${{ (github.ref_type == 'tag' || inputs.push) && 'true' || 'false' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
