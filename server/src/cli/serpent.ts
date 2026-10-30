@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import type { ScriptLanguage } from '../types';
 
 interface CliOptions {
   positionals: string[];
@@ -10,7 +11,13 @@ interface CliOptions {
 interface ScriptSummary {
   id: number;
   name: string;
+  language: ScriptLanguage;
 }
+
+const scriptSummarySchema = z.object({
+  id: z.number().int().positive(), name: z.string(),
+  language: z.enum(['javascript', 'python']).default('javascript'),
+});
 
 function parseArgs(argv: string[]): CliOptions {
   const positionals: string[] = [];
@@ -84,6 +91,13 @@ function readCode(file: string): string {
   return fs.readFileSync(path.resolve(base, file), 'utf8');
 }
 
+function scriptLanguage(file: string, flags: CliOptions['flags']): ScriptLanguage {
+  if (!flags.has('language')) return path.extname(file).toLowerCase() === '.py' ? 'python' : 'javascript';
+  const parsed = z.enum(['javascript', 'python']).safeParse(flags.get('language'));
+  if (!parsed.success) throw new Error('--language 仅支持 javascript、python');
+  return parsed.data;
+}
+
 function listScripts(): Promise<unknown> {
   return request('/scripts');
 }
@@ -92,10 +106,7 @@ function scriptItems(payload: unknown): ScriptSummary[] {
   if (typeof payload !== 'object' || payload === null || !('data' in payload) || !Array.isArray(payload.data)) {
     throw new Error('脚本列表响应格式不正确');
   }
-  return payload.data.filter((item): item is ScriptSummary => {
-    return typeof item === 'object' && item !== null && 'id' in item && typeof item.id === 'number'
-      && 'name' in item && typeof item.name === 'string';
-  });
+  return payload.data.map(item => scriptSummarySchema.parse(item));
 }
 
 async function findScript(name: string): Promise<ScriptSummary | undefined> {
@@ -189,14 +200,15 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (!command || command === 'help' || command === '--help') {
     process.stdout.write(`SERPENT CLI（SERPENT_URL、SERPENT_API_KEY）\n\n` +
       `  whoami\n` +
-      `  push <file> --script <name> [--note <text>]\n` +
-      `  validate <file>\n` +
-      `  dry-run <file> --scenario <id>\n` +
+      `  push <file> --script <name> [--note <text>] [--language javascript|python]\n` +
+      `  validate <file> [--language javascript|python]\n` +
+      `  dry-run <file> --scenario <id> [--language javascript|python]\n` +
       `  test <scriptName> --mode battle --vs greedy,coward\n` +
       `  review <matchId> [--slot N] [--json]\n` +
       `  trend <script> [--mode battle] [--limit 50] [--json]\n` +
       `  ladder join <slug> --script <name>\n` +
-      `  leaderboard <slug>\n`);
+      `  leaderboard <slug>\n\n` +
+      `  .py 文件自动识别为 Python，其余默认为 JavaScript；创建后的脚本语言不可修改。\n`);
     return;
   }
 
@@ -246,31 +258,38 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   }
 
   if (command === 'validate') {
+    checkOptions({ positionals, flags }, ['language'], 'validate <file> [--language javascript|python]');
     const file = positionals[0];
     if (!file) throw new Error('用法：validate <file>');
-    print(await request('/scripts/validate', { body: { code: readCode(file) } }));
+    print(await request('/scripts/validate', { body: { code: readCode(file), language: scriptLanguage(file, flags) } }));
     return;
   }
 
   if (command === 'dry-run') {
+    checkOptions({ positionals, flags }, ['language', 'scenario'], 'dry-run <file> --scenario <id> [--language javascript|python]');
     const file = positionals[0];
     if (!file) throw new Error('用法：dry-run <file> --scenario <id>');
     print(await request('/scripts/dry-run', {
-      body: { code: readCode(file), scenario: requiredString(flags, 'scenario') },
+      body: { code: readCode(file), language: scriptLanguage(file, flags), scenario: requiredString(flags, 'scenario') },
     }));
     return;
   }
 
   if (command === 'push') {
+    checkOptions({ positionals, flags }, ['language', 'script', 'note'], 'push <file> --script <name> [--note <text>] [--language javascript|python]');
     const file = positionals[0];
     if (!file) throw new Error('用法：push <file> --script <name> [--note <text>]');
     const name = requiredString(flags, 'script');
     const code = readCode(file);
+    const language = scriptLanguage(file, flags);
     const note = optionalString(flags, 'note');
     const existing = await findScript(name);
+    if (existing && existing.language !== language) {
+      throw new Error(`脚本「${name}」的语言为 ${existing.language}，不能提交 ${language} 版本；请使用其他脚本名`);
+    }
     print(existing
       ? await request(`/scripts/${existing.id}/versions`, { body: { code, note } })
-      : await request('/scripts', { body: { name, code, note } }));
+      : await request('/scripts', { body: { name, code, language, note } }));
     return;
   }
 

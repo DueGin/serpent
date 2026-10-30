@@ -6,7 +6,7 @@ import { AppError, runnerError } from '../http';
 import { arenaEvents } from '../realtime';
 import * as runner from '../runner';
 import { COLORS, PLAYBACK_TICK_MS } from '../types';
-import type { BuiltinBot, DecisionTrace, MatchConfig, MatchKind, ParticipantInput, Replay, SimulateResult } from '../types';
+import type { BuiltinBot, DecisionTrace, MatchConfig, MatchKind, ParticipantInput, Replay, ScriptLanguage, SimulateResult } from '../types';
 import type * as DTO from '../api-types';
 import { buildMatchReview, type MatchReviewAnalysis } from '../game/review';
 import { resolveAgent, type Principal } from './principal';
@@ -33,7 +33,7 @@ type ParticipantRow = {
   rating_after: number | null;
 };
 type ScriptRow = {
-  id: number; agent_id: number; name: string; visibility: string; archived: number;
+  id: number; agent_id: number; name: string; visibility: string; archived: number; language: ScriptLanguage;
   active_version_id: number | null; agent_name: string; user_id: number; disabled: number;
 };
 type VersionRow = { id: number; script_id: number; version: number; status: string; code: string };
@@ -164,7 +164,7 @@ function resolveParticipant(db: Db, ref: InternalParticipant & { version?: numbe
   if (!version) throw new AppError('NOT_FOUND', '脚本没有可参赛的生效版本');
   if (version.status !== 'valid') throw new AppError('VALIDATION_ERROR', '参赛脚本版本必须通过检测');
   return { ...base,
-    input: { slot, team, name: ref.name ?? `${script.agent_name} / ${script.name}`, source: { kind: 'script', code: version.code } },
+    input: { slot, team, name: ref.name ?? `${script.agent_name} / ${script.name}`, source: { kind: 'script', code: version.code, language: script.language ?? 'javascript' } },
     agentId: script.agent_id, scriptId: script.id, versionId: version.id, version: version.version, builtin: null };
 }
 

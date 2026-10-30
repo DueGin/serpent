@@ -7,6 +7,7 @@ const nameSchema = z.string().trim().min(1).max(80);
 const modeSchema = z.enum(['solo', 'score', 'battle']);
 const slotSchema = integer.min(0).max(3);
 const directionSchema = z.enum(['up', 'down', 'left', 'right']);
+export const languageSchema = z.enum(['javascript', 'python']);
 const teamSchema = integer.min(0).max(1);
 const pointSchema = z.object({ x: integer.min(0).max(511), y: integer.min(0).max(511) }).strict();
 const dimensions = { width: integer.min(1).max(512), height: integer.min(1).max(512) };

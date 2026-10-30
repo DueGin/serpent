@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { dryRunOptionsShape, refineDryRunOptions } from '../services/script-input';
+import { dryRunOptionsShape, languageSchema, refineDryRunOptions } from '../services/script-input';
 
 export { initSchema, stateSchema } from '../services/script-input';
 
@@ -33,16 +33,16 @@ export const agentPatchSchema = nonemptyPatch({
 });
 export const scriptCreateSchema = z.object({
   agentId: idSchema.optional(), name: nameSchema, description: descriptionSchema.optional(),
-  visibility: visibilitySchema.optional(), code: codeSchema, note: noteSchema.optional(),
+  visibility: visibilitySchema.optional(), language: languageSchema.optional(), code: codeSchema, note: noteSchema.optional(),
 }).strict();
 export const scriptPatchSchema = nonemptyPatch({
   name: nameSchema.optional(), description: descriptionSchema.optional(), visibility: visibilitySchema.optional(),
   activeVersion: idSchema.optional(),
 });
 export const versionCreateSchema = z.object({ code: codeSchema, note: noteSchema.optional(), activate: z.boolean().optional() }).strict();
-export const validateSchema = z.object({ code: codeSchema }).strict();
+export const validateSchema = z.object({ code: codeSchema, language: languageSchema.optional() }).strict();
 export const dryRunSchema = z.object({
-  code: codeSchema.optional(), scriptId: idSchema.optional(), version: idSchema.optional(),
+  code: codeSchema.optional(), language: languageSchema.optional(), scriptId: idSchema.optional(), version: idSchema.optional(),
   ...dryRunOptionsShape,
 }).strict().superRefine((input, ctx) => {
   if ((input.code !== undefined) === (input.scriptId !== undefined)) {

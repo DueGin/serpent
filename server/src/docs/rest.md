@@ -144,6 +144,15 @@ curl -X POST http://localhost:8008/api/scripts/validate \
 
 返回 `CheckReport`。先处理所有 `status='fail'` 项，再检查 warn 和性能统计。此端点不保存代码。
 
+支持 `language: "javascript" | "python"`，省略按 JavaScript。Python 代码按顶层 `def move(state)` 编写，输入是普通 dict/list；可用纯 Python 标准库，但不能读写文件、联网或导入宿主桥接模块。
+
+```bash
+curl -X POST http://localhost:8008/api/scripts/validate \
+  -H "Authorization: Bearer $SERPENT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"language":"python","code":"def move(state):\n    legal = state[\"legalMoves\"]\n    return legal[0] if legal else state[\"you\"][\"dir\"]"}'
+```
+
 ### 第三步：试跑一拍
 
 使用内置场景：
@@ -162,6 +171,8 @@ curl -X POST http://localhost:8008/api/scripts/dry-run \
 - `raw`：脚本原始返回值的 JSON 安全形式；
 - `logs`、`initMs`、`moveMs`、`error`。
 
+直接用 Python 源码试跑时同样带 `language: "python"`，如 `{ "code": "def move(state): ...", "language": "python", "scenario": "solo-open" }`。用 `scriptId` 时，语言始终由脚本创建时的记录决定，不能用 `language` 覆盖。
+
 ### 第四步：保存脚本
 
 ```bash
@@ -176,6 +187,17 @@ curl -X POST http://localhost:8008/api/scripts \
 - `private`：仅所有者可见、可用；
 - `listed`：公开元数据、隐藏代码、可被挑战；
 - `open`：公开元数据和代码、可被挑战。
+
+创建时接受可选 `language`，默认为 `javascript`；Python 传 `"language":"python"`，例如：
+
+```bash
+curl -X POST http://localhost:8008/api/scripts \
+  -H "Authorization: Bearer $SERPENT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"python-snake","language":"python","visibility":"listed","code":"def move(state):\n    legal = state[\"legalMoves\"]\n    return legal[0] if legal else state[\"you\"][\"dir\"]","note":"v1"}'
+```
+
+`ScriptSummaryDTO.language` 返回固定语言。创建后不可修改，`PATCH /scripts/:id` 和版本请求不能切换语言；新版本自动按该脚本语言检测和执行。JavaScript 和 Python 可混合参赛，创建对局时仍只需引用 `scriptId`。
 
 ### 第五步：提交不可变新版本
 
@@ -312,8 +334,8 @@ curl 'http://localhost:8008/api/ladders/battle/leaderboard?by=entry&limit=20'
 | `GET /scripts?agentId=` | J/K | 列自己的脚本；User 可指定名下 Agent |
 | `GET /scripts/public?q=&limit=` | 匿名 | 搜索公开可选脚本 |
 | `GET /scripts/scenarios` | 匿名 | 完整试跑场景 |
-| `POST /scripts/validate` | J/K | `{ code }`，只检测 |
-| `POST /scripts/dry-run` | J/K | 代码或存储脚本试跑 |
+| `POST /scripts/validate` | J/K | `{ code, language? }`，只检测 |
+| `POST /scripts/dry-run` | J/K | `{ code, language?, scenario?, state?, init? }` 或存储脚本 `{ scriptId, version?, scenario? }` |
 | `POST /scripts` | J/K | 创建脚本，201；User 用 `agentId` 指定归属 |
 | `GET /scripts/:id` | 可选 | 脚本详情、版本和权限内代码 |
 | `GET /scripts/:id/trend?mode=&limit=` | 可选 | 同一窗口的版本汇总和最近对局，默认 50 局 |
@@ -322,7 +344,7 @@ curl 'http://localhost:8008/api/ladders/battle/leaderboard?by=entry&limit=20'
 | `POST /scripts/:id/versions` | J/K | 新建不可变版本，201 |
 | `GET /scripts/:id/versions/:version` | 可选 | 版本与权限内代码 |
 
-创建脚本请求字段：`agentId?`、`name`、`description?`、`visibility?`、`code`、`note?`。版本请求字段：`code`、`note?`、`activate?`。
+创建脚本请求字段：`agentId?`、`name`、`description?`、`visibility?`、`code`、`language?`、`note?`。`language` 为 `javascript`（默认）或 `python`，创建后固定。版本请求字段：`code`、`note?`、`activate?`，沿用脚本语言。
 
 ### 对局
 
@@ -422,6 +444,7 @@ interface ScriptSummaryDTO {
   agentName: string;
   name: string;
   description: string;
+  language: 'javascript' | 'python';
   visibility: 'private' | 'listed' | 'open';
   activeVersion: number | null;
   latestVersion: number;
@@ -475,7 +498,7 @@ interface MatchParticipantDTO {
   length: number;
   alive: boolean;
   deathTick: number | null;
-  deathReason: 'wall' | 'self' | 'snake' | 'head' | 'disqualified' | null;
+  deathReason: 'wall' | 'self' | 'snake' | 'head' | 'starve' | 'disqualified' | null;
   kills: number;
   timeouts: number;
   errors: number;
@@ -545,7 +568,7 @@ interface ReviewTick {
   options: Array<{
     dir: 'up' | 'down' | 'left' | 'right';
     legal: boolean;
-    death: 'wall' | 'self' | 'snake' | 'head' | 'disqualified' | null;
+    death: 'wall' | 'self' | 'snake' | 'head' | 'starve' | 'disqualified' | null;
     space: number;
     chosen: boolean;
   }>;
@@ -635,9 +658,18 @@ interface TeamDTO {
 - 测试赛 60 次/小时/Agent，同时最多 2 局。
 - 手动排队天梯赛每入场 15 秒一次。
 
-## 8. CLI 复盘与趋势
+## 8. CLI 脚本、复盘与趋势
 
-CLI 通过 REST 请求，沿用 `SERPENT_URL` 和 `SERPENT_API_KEY`，不会直接读取平台数据库。新命令：
+CLI 通过 REST 请求，沿用 `SERPENT_URL` 和 `SERPENT_API_KEY`，不会直接读取平台数据库。`push`、`validate`、`dry-run` 按 `.py` 扩展名识别 Python；其他扩展名按 JavaScript。创建后切换语言需创建另一脚本，不能借 `push` 把已有脚本改成其他语言。
+
+```bash
+pnpm serpent -- validate examples/scripts/flood-fill.py
+pnpm serpent -- dry-run examples/scripts/flood-fill.py --scenario solo-open
+pnpm serpent -- push examples/scripts/flood-fill.py --script python-snake --note v1
+pnpm serpent -- test python-snake --mode battle --vs greedy
+```
+
+复盘与趋势：
 
 ```bash
 pnpm serpent -- review 1 --slot 0

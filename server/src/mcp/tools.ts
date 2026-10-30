@@ -16,6 +16,7 @@ import {
   dryRunSchema,
   idSchema,
   joinLadderSchema,
+  languageSchema,
   modeSchema,
   participantSchema,
   visibilitySchema,
@@ -92,10 +93,10 @@ export function registerTools(server: McpServer, p: Principal): void {
 
   tool(server,'validate_code', {
     title: '检测脚本代码',
-    description: '只检测不保存。检查编译、move/init 接口、场景合法性、陷阱选择、solo/battle 迷你模拟和性能。返回每个 CheckItem 的状态。',
-    inputSchema: { code: codeSchema },
-  }, async ({ code }) => perform(async () => {
-    const report = await scriptsSvc.validate(code, p);
+    description: '只检测不保存。language 为 javascript（默认）或 python。检查编译、move/init 接口、场景合法性、陷阱选择、solo/battle 迷你模拟和性能。返回每个 CheckItem 的状态。',
+    inputSchema: { code: codeSchema, language: languageSchema.optional() },
+  }, async ({ code, language }) => perform(async () => {
+    const report = await scriptsSvc.validate(code, p, language);
     const failed = report.items.filter((item) => item.status === 'fail');
     const next = report.ok
       ? '调用 dry_run 检查关键局面，再用 create_script 保存，或直接 run_test_match 检验实战。'
@@ -105,7 +106,7 @@ export function registerTools(server: McpServer, p: Principal): void {
 
   tool(server,'dry_run', {
     title: '单拍试跑脚本',
-    description: '用新 code 或已保存 scriptId 在某场景/自定义 state 上执行一次 init+move，返回原始值、方向、合法性、日志和耗时。code 与 scriptId 必须且只能提供一个。',
+    description: '用新 code 或已保存 scriptId 在某场景/自定义 state 上执行一次 init+move，返回原始值、方向、合法性、日志和耗时。code 与 scriptId 必须且只能提供一个。code 可带 language（javascript 默认或 python）；scriptId 始终使用脚本创建时的语言。',
     inputSchema: dryRunSchema,
   }, async (input) => perform(async () => {
     const result = await scriptsSvc.dryRun(p, input);
@@ -117,7 +118,7 @@ export function registerTools(server: McpServer, p: Principal): void {
 
   tool(server,'list_scripts', {
     title: '列出我的脚本',
-    description: '列出当前 Agent 的脚本、版本状态、可见性和天梯成绩。',
+    description: '列出当前 Agent 的脚本、语言、版本状态、可见性和天梯成绩。',
   }, async () => perform(async () => {
     const scripts = await scriptsSvc.list(p, {});
     return success(scripts, `当前 Agent 有 ${scripts.length} 个脚本。`, scripts.length ? '用 get_script 查看版本与报告，或 run_test_match 选择参赛者。' : '用 create_script 创建第一个脚本。');
@@ -150,12 +151,13 @@ export function registerTools(server: McpServer, p: Principal): void {
 
   tool(server,'create_script', {
     title: '创建脚本',
-    description: '创建当前 Agent 的脚本和不可变 v1，返回完整版本检测报告。建议先 validate_code；无效版本不会成为生效版本。',
+    description: '创建当前 Agent 的脚本和不可变 v1，返回完整版本检测报告。language 为 javascript（默认）或 python，创建后不能修改。建议先 validate_code；无效版本不会成为生效版本。',
     inputSchema: {
       name: z.string().min(1).max(80),
       description: z.string().max(2000).optional(),
       visibility: visibilitySchema.optional(),
       code: codeSchema,
+      language: languageSchema.optional(),
       note: z.string().max(2000).optional(),
     },
   }, async (input) => perform(async () => {
@@ -170,7 +172,7 @@ export function registerTools(server: McpServer, p: Principal): void {
 
   tool(server,'update_script', {
     title: '提交脚本新版本',
-    description: '为已有脚本提交不可变新版本并检测。activate 缺省时由服务按检测结果决定；传 false 可只保存不切换。',
+    description: '为已有脚本提交不可变新版本并按脚本创建时的语言检测，不能切换语言。activate 缺省时由服务按检测结果决定；传 false 可只保存不切换。',
     inputSchema: {
       scriptId: idSchema,
       code: codeSchema,

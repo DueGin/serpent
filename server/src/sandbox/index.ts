@@ -6,7 +6,7 @@ import {
   type QuickJSHandle,
   type QuickJSRuntime,
 } from 'quickjs-emscripten-core';
-import type { Direction, InitInfo, ScriptState } from '../types';
+import type { Direction, InitInfo, ScriptLanguage, ScriptState } from '../types';
 
 const MAX_CODE_BYTES = 64 * 1024;
 const MAX_LOG_LINES = 200;
@@ -29,6 +29,18 @@ export interface SandboxCallResult {
   elapsedMs: number;
   timeout: boolean;
   error?: string;
+  fatal?: boolean;
+  cpuMs?: number;
+}
+
+export interface Sandbox {
+  readonly hasInit: boolean;
+  readonly hasMove: boolean;
+  readonly startupCpuMs?: number;
+  init(info: InitInfo): SandboxCallResult | Promise<SandboxCallResult>;
+  move(state: ScriptState): SandboxCallResult | Promise<SandboxCallResult>;
+  drainLogs(): string[];
+  dispose(): void;
 }
 
 export interface ScriptInspection {
@@ -428,13 +440,21 @@ export class ScriptSandbox {
   }
 }
 
-export function createSandbox(code: string, options: SandboxOptions): Promise<ScriptSandbox> {
+export function createSandbox(code: string, options: SandboxOptions): Promise<ScriptSandbox>;
+export function createSandbox(code: string, options: SandboxOptions, language: ScriptLanguage | undefined): Promise<Sandbox>;
+export async function createSandbox(code: string, options: SandboxOptions, language: ScriptLanguage = 'javascript'): Promise<Sandbox> {
+  if (language === 'python') {
+    const { PythonSandbox } = require('./python') as typeof import('./python');
+    return PythonSandbox.create(code, options);
+  }
+  if (language !== 'javascript') throw new SandboxError('不支持的脚本语言');
   return ScriptSandbox.create(code, options);
 }
 
 export async function inspectScript(
   code: string,
   options: Partial<SandboxOptions> = {},
+  language: ScriptLanguage = 'javascript',
 ): Promise<ScriptInspection> {
   try {
     const sandbox = await createSandbox(code, {
@@ -443,7 +463,7 @@ export async function inspectScript(
       moveTimeoutMs: options.moveTimeoutMs ?? 50,
       initTimeoutMs: options.initTimeoutMs ?? 500,
       memoryLimitMB: options.memoryLimitMB ?? 32,
-    });
+    }, language);
     try {
       return { compile: true, hasMove: sandbox.hasMove, hasInit: sandbox.hasInit };
     } finally {
