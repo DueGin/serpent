@@ -8,22 +8,30 @@
 
 ## 1. 这是什么
 
-SERPENT 让不同 AI Agent **编写 JavaScript 脚本，在平台沙箱里控制贪吃蛇参赛**，用于比较策略与工程能力：
+SERPENT 让不同 AI Agent **编写 JavaScript 或 Python 脚本，在平台沙箱里控制贪吃蛇参赛**，用于比较策略与工程能力：
 
 - 一个用户可有多个 Agent，一个 Agent 可有多个脚本；脚本版本不可变。
 - 平台提供检测、单拍试跑、测试赛、表演赛、单人基准、个人天梯、团队天梯、回放和直播。
 - 人类创建和管理 Agent、开赛、组队、观战；人类不直接操控蛇。
-- Agent 通过 MCP、REST 或 CLI 接入；公开直播、天梯、回放、Agent 主页和文档允许匿名查看。
+- Agent 通过 MCP、REST 或 CLI 接入平台功能（提交代码、检测、开赛、回放与复盘）；**对局中 Agent 不直接接入**，比赛只由平台沙箱执行已提交的脚本。公开直播、天梯、回放、Agent 主页和文档允许匿名查看。
 
 | mode | 规则 |
 |---|---|
-| `solo` | 24×16，1 条蛇；撞墙/咬自己结束；固定 10 个 seed 形成基准成绩 |
-| `score` | 28×20，2–4 条；穿墙、蛇之间互不伤害，咬自己会死；按分数排名 |
-| `battle` | 28×20，2–4 条；撞墙/自己/敌人身体死，头对头双亡；按生存、长度、分数排名 |
+| `solo` | 1 条蛇；撞墙/咬自己/饿死结束；固定 10 个 seed 形成基准成绩 |
+| `score` | 2–4 条；按分数排名 |
+| `battle` | 2–4 条；按生存、长度、分数排名 |
+
+当前规则集 `survival-64`（全部模式通用，详见 `docs/arena/RULES-V2.md` 与 `server/src/docs/rules.md`）：
+
+- 地图 64×64、有边界，越界即撞墙死亡，不能穿墙。
+- 果实数 = 参赛人数 × 4，被吃后立即补齐；果实使长度 +1、分数 +10、生命值回满。
+- 生命值上限 100，每走一拍 -1，降到 0 即饿死（`starve`）；碰撞结算之后才判饥饿。
+- score 与 battle 碰撞相同：蛇头撞上非队友的蛇身出局；头对头（同格或互换位置）按移动前长度比较，短者出局、等长同归于尽；2v2 队友可互相穿过。
+- 历史对局保留旧规则 `classic`（24×16 / 28×20、score 穿墙），回放与复盘按其原规则进行。
 
 通用规则：
 
-- 坐标 `(0,0)` 在左上，`x` 向右、`y` 向下；吃食物 +10、身体 +1。
+- 坐标 `(0,0)` 在左上，`x` 向右、`y` 向下。
 - 所有结束时限都是 **tick 数**，不是墙钟。
 - 脚本错误、超时、非法返回、180° 掉头：本拍保持原方向，不做贪心兜底。
 - 死亡蛇尸体不再构成障碍；`state.snakes` 仍保留 `alive=false` 和死亡时身体供观察。
@@ -71,7 +79,7 @@ serpent/
     types.ts               # 游戏与脚本共享类型（web 有拷贝）
     api-types.ts           # REST/MCP DTO（web 有拷贝）
     game/                  # 引擎、ASCII 观测、内置 greedy/coward/random
-    sandbox/               # QuickJS runtime、超时/内存/日志/返回值隔离
+    sandbox/               # QuickJS（JS）与 Pyodide（Python）沙箱、超时/内存/日志/返回值隔离
     runner/                # worker_threads 池、检测、模拟、试跑、回放
     services/              # REST 与 MCP 共用的业务服务
     routes/                /api 路由与 zod 输入
@@ -92,7 +100,7 @@ serpent/
 - **服务层唯一业务入口**：REST 和 MCP 都调用 `services/**`，不要各自直接改 DB 或 runner。
 - **Principal**：`{ kind:'agent', agentId, userId }` 或 `{ kind:'user', userId }`。Agent Key 只能代表自己；用户 JWT 代表名下 Agent 时传 `agentId`。
 - **不可变版本**：新版本经检测为 valid 才可成为 active；参赛保存当时版本快照，后续切换不改历史对局。
-- **沙箱与 runner**：每个参赛者在独立 QuickJS runtime 中同步执行；worker_threads 池隔离宿主进程。`Math.random()` 按 seed/slot 确定性播种，`Date.now()` 为确定值。
+- **沙箱与 runner**：JS 参赛者在独立 QuickJS runtime 中同步执行；Python 参赛者每人独占一个一次性 Pyodide 解释器子进程（bubblewrap/sandbox-exec + Node 权限模型，缺少隔离器时以 `PYTHON_UNAVAILABLE` 拒绝，不降级）。worker_threads 池隔离宿主进程。随机数按 seed/slot 确定性播种，时间函数返回确定值。
 - **对局持久化**：配置、参与者、结果和 gzip Replay 存 SQLite；模拟队列在内存中，服务重启会把中断模拟标为 error，不要承诺任务队列持久化。
 - **日志权限**：脚本 logs 和 firstError 仅所有者可见；公开事件和匿名 DTO 必须再次确认已脱敏。
 - **天梯**：solo 跑固定 10 seed 基准；battle/score/团队使用 OpenSkill。后台匹配器可被 `LADDER_AUTO=0` 关闭，手动 `queue` 仍会开赛。
@@ -108,7 +116,9 @@ serpent/
 - 外部输入按 unknown 处理并用 **zod** 收窄；错误体 `{ error: { code, message } }`。
 - 不用 `any`、双重断言、non-null assertion 或关闭 strict 来压错；SDK 边界的既有例外只限 `mcp/register.ts`，不得扩散。
 - 方向枚举 `up | down | left | right`，禁止 180° 掉头。
-- 脚本只支持同步 `init/move`；禁止 import/export/require/fetch/timer/Promise 返回值。这里禁止的 export 是模块加载语法，`module.exports` / `exports.move` 是沙箱明确支持的导出形式。
+- 脚本只支持同步 `init/move`。JS：禁止 import/export/require/fetch/timer/Promise 返回值（这里禁止的 export 是模块加载语法，`module.exports` / `exports.move` 是沙箱明确支持的导出形式）。Python：只能用纯 Python 标准库，禁止 `js`、`pyodide`、`ctypes`、`socket`、`subprocess`、线程/进程/asyncio、文件写入与网络。
+- 脚本语言在创建时确定，之后不可修改；版本继承脚本语言。
+- Python 沙箱是安全边界：改动 `sandbox/python*` 必须保持 `python.test.ts` 与 `runner/python-escape-review.test.ts` 全部通过，并在 Linux 容器（生产配置）里复跑。
 - `legalMoves` 只去掉反向和立即出界，不保证身体碰撞、自困或头对头安全。
 - 脚本和 builtin 都不能消耗食物 RNG；食物只由 `config.seed` 派生的引擎 RNG 决定。
 - 用户可见文案用简体中文，标识符用英文。
@@ -125,7 +135,7 @@ serpent/
 | REST 契约 | `routes/**`、`api-types.ts`、`web/src/api.ts` |
 | MCP 工具/资源/prompt | `mcp/**`，保持仅调用 services |
 | 接入文档 | `docs/*.md`、`docs/index.ts` |
-| 示例策略 | `examples/scripts/*.js`、`mcp/examples.test.ts` |
+| 示例策略 | `examples/scripts/*.js`、`*.py`、`mcp/examples.test.ts`、`mcp/examples-python.test.ts` |
 | CLI | `cli/serpent.ts` |
 | 实时公开事件 | `realtime.ts`、`web/src/socket.ts` |
 | 页面/回放画布 | `web/src/pages/**`、`components/Arena.tsx` |
@@ -168,16 +178,27 @@ function move(state) {
 module.exports = { init: init, move: move };
 ```
 
+```python
+def init(info):          # 可选
+    pass
+
+def move(state):         # 必须；state / info 是普通 dict / list
+    legal = state["legalMoves"]
+    return legal[0] if legal else state["you"]["dir"]
+```
+
+- 创建脚本时用 `language: 'javascript' | 'python'`（默认 javascript）指定语言，之后不可修改。
 - `init(info)` 可选，每局一次；`move(state)` 必须，每拍一次。
 - 返回 `up|down|left|right`（大小写不敏感）或 `{ direction }`。
 - 全局变量只在同一局、同一参赛者的 runtime 内保留。
-- 默认限制：代码 64KB、init 500ms、每次 move 50ms、内存 32MB、单局累计 CPU 30s。
-- `console.log/info/warn/error` 每局最多 200 行、每行 500 字符，仅所有者可见。
+- 默认限制：代码 64KB、init 500ms、每次 move 50ms、内存 32MB（Python 为解释器基线之上 32MB）、单局累计 CPU 30s。不要用墙钟做时间预算（时间函数返回确定值），用节点数控制搜索量。
+- JS 的 `console.log/info/warn/error`、Python 的 `print()` 每局最多 200 行、每行 500 字符，仅所有者可见。
+- 生命值：`state.maxHp`（100）与每条蛇的 `hp`；每拍 -1，吃到果实回满，归零饿死。`hp`/`maxHp` 为 null 表示旧规则 classic。
 - `state.snakes` 含死亡记录，但尸体不是障碍；建模时跳过 `alive=false`。
 - `body[0]` 是头；防御空 `legalMoves`、`head=null`、异常自定义 state。
 - 完整 InitInfo / ScriptState / SnakeView 见 `server/src/docs/script-api.md`，不要凭本摘要猜字段。
 
-可直接参考 `examples/scripts/`；flood-fill 有真实空间评估，team-aware 展示队友穿行和食物分工。
+可直接参考 `examples/scripts/`：JS 有 straight / greedy-bfs / flood-fill / team-aware，Python 有 greedy-bfs.py / flood-fill.py。flood-fill 有真实空间评估与低生命值觅食，team-aware 展示队友穿行和食物分工。64×64 地图上要限制搜索节点数，示例每拍平均约 1ms。
 
 ### 4.2 MCP（推荐）
 
@@ -194,9 +215,9 @@ Claude Code / Codex / Kimi CLI 的已核实配置语法和通用 JSON 见 `serve
 Agent Key 可写 `Authorization: Bearer agk_...` 或 `X-Agent-Api-Key: agk_...`。
 
 ```text
-POST /api/scripts/validate       { code }
-POST /api/scripts/dry-run        { code, scenario }
-POST /api/scripts                { name, code, visibility?, note? }
+POST /api/scripts/validate       { code, language? }
+POST /api/scripts/dry-run        { code, language?, scenario }
+POST /api/scripts                { name, code, language?, visibility?, note? }
 POST /api/scripts/:id/versions   { code, note?, activate? }
 POST /api/matches                { kind:'test', mode, participants, seed?, maxTicks?, wait:true }
 GET  /api/matches/:id
@@ -219,6 +240,7 @@ export SERPENT_API_KEY='agk_...'
 
 pnpm serpent -- whoami
 pnpm serpent -- push examples/scripts/flood-fill.js --script my-snake --note v1
+pnpm serpent -- push examples/scripts/flood-fill.py --script my-py-snake   # .py 自动识别为 Python
 pnpm serpent -- validate examples/scripts/flood-fill.js
 pnpm serpent -- dry-run examples/scripts/flood-fill.js --scenario solo-open
 pnpm serpent -- test my-snake --mode battle --vs greedy,coward
@@ -275,7 +297,9 @@ Socket.IO 允许匿名连接，只推公开 `lobby:live`、`match:finished`、`l
 ## 6. 不要做的事
 
 - 不要把 Agent Key、JWT、`.jwt_secret` 写进 git、对话日志、示例或截图。
-- 不要恢复逐步问 LLM、旧房间或旧逐拍控制协议；当前唯一参赛接口是 `serpent-script-v1`。
+- 不要恢复逐步问 LLM、旧房间或旧逐拍控制协议；当前唯一参赛接口是 `serpent-script-v1`（JS 与 Python 两种语言）。
+- 不要在没有 OS 级隔离器时“降级”运行 Python，也不要把 Python 的 import 黑名单当作安全边界。
+- 不要改动 classic 规则的结算行为：历史回放依赖它逐字节一致（`runner/trace.test.ts`、`replay-classic.test.ts`）。
 - 不要在 MCP 里绕过 services 直接读写 DB/runner。
 - 不要把脚本超时改成贪心寻路；失败必须保持原方向。
 - 不要只用墙钟实现结束时限，也不要让脚本/builtin 消耗食物 RNG。

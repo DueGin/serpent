@@ -28,6 +28,8 @@ docker compose ps        # 状态为 healthy 即启动完成
 | `JWT_SECRET` | 空 | 用户登录令牌签名密钥；留空则首次启动自动生成并保存在数据卷中 |
 | `LADDER_AUTO` | `1` | 后台天梯匹配器；`0` 关闭（手动 queue 仍可开赛） |
 | `RUNNER_WORKERS` | 自动 | 模拟 worker 线程数，默认按 CPU 选择（最多 4） |
+| `PYTHON_MAX_HOSTS` | `4` | 每个 runner worker 最多同时运行的 Python 解释器数 |
+| `PYTHON_WARM_HOSTS` | `1` | 每个 runner worker 预热的空闲解释器数（隐藏约 1 秒的冷启动） |
 
 ### 数据与备份
 
@@ -69,8 +71,25 @@ location / {
 ### 资源与限制
 
 - **单实例**：SQLite 与内存中的模拟队列不支持多副本；重启会把进行中的模拟标记为失败（已完成的对局不受影响）。
-- **内存**：JS 脚本在 QuickJS 沙箱中运行，开销很小；Python 脚本每个参赛者占用一个独立子进程，内存明显更大，请按并发上限预留（见 `server/src/docs/script-api.md` 的 Python 部分）。
+- **内存**：JS 脚本在 QuickJS 沙箱中运行，开销很小。每个 Python 参赛者独占一个解释器子进程，约 200MB；最坏占用约 `RUNNER_WORKERS × (PYTHON_MAX_HOSTS + PYTHON_WARM_HOSTS) × 200MB`，默认 4 个 worker 时约 4GB，**推荐 8GB 以上内存**。小机器可在 `.env` 中调低 `RUNNER_WORKERS` 或 `PYTHON_MAX_HOSTS`。
 - 容器以非 root 用户 `node` 运行；`init: true` 让 tini 回收沙箱子进程并转发停止信号。
+
+### Python 脚本的运行要求
+
+Python 脚本运行在 Pyodide（WebAssembly 版 CPython）中，每个解释器再用 bubblewrap 放进独立的网络、进程、IPC 与文件系统命名空间，并叠加 Node 权限模型。这些隔离需要：
+
+1. **容器**：`docker-compose.yml` 默认带了 `seccomp=unconfined`、`apparmor=unconfined`、`systempaths=unconfined`。Docker 默认的这三项限制会阻止容器内创建用户命名空间和挂载 `/proc`。容器本身仍是无 capability 的 `node` 用户。如果不需要 Python，可以删掉这三行：Python 脚本会被明确拒绝（`PYTHON_UNAVAILABLE`），JavaScript 不受影响。
+2. **宿主机内核允许非特权用户命名空间**：
+   - Ubuntu 23.10 及以后（含 24.04）默认限制非特权用户命名空间，即使容器设为 `apparmor=unconfined` 也会被拦住。需要在宿主机执行：
+
+     ```bash
+     echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-serpent-userns.conf
+     sudo sysctl --system
+     ```
+   - 较老的 Debian 内核需要 `kernel.unprivileged_userns_clone=1`（Debian 11 及以后默认已开启）。
+3. 部署后检查：`curl http://服务器:8008/api/health`，返回中 `python.available` 为 `true` 即可使用；为 `false` 时 `reason` 会说明缺少哪一项。
+
+不用 Docker 直接部署在 Linux 上时，需要安装 `bubblewrap`（`apt-get install bubblewrap`）并满足第 2 条；macOS 使用系统自带的 `sandbox-exec`。
 
 ## 2. 从源码构建镜像
 
