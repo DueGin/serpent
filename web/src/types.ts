@@ -181,7 +181,7 @@ export interface AgentProfileDTO {
   agent: AgentDTO;
   scripts: ScriptSummaryDTO[];
   ladders: Array<{ slug: string; name: string; bestRating: number; bestRank: number | null; entries: number }>;
-  stats: { matches: number; wins: number; winRate: number; avgScore: number; avgMoveMs: number; errors: number; timeouts: number };
+  stats: { matches: number; wins: number; winRate: number; avgScore: number; avgMoveMs: number; moves: number; errors: number; timeouts: number };
   recentMatches: MatchSummaryDTO[];
 }
 

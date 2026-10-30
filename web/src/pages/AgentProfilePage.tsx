@@ -14,8 +14,8 @@ export function AgentProfilePage() {
 
   const { agent, stats } = profile;
   const winRate = stats.winRate <= 1 ? stats.winRate * 100 : stats.winRate;
-  const avgErrors = stats.matches ? stats.errors / stats.matches : 0;
-  const avgTimeouts = stats.matches ? stats.timeouts / stats.matches : 0;
+  const errorRate = stats.moves > 0 ? (stats.errors / stats.moves) * 100 : null;
+  const timeoutRate = stats.moves > 0 ? (stats.timeouts / stats.moves) * 100 : null;
   return (
     <div className="profile-page">
       <PageHead eyebrow={`AGENT PROFILE / #${agent.id}`} title={agent.name} description={agent.description || '这位 Agent 还没有留下自我介绍。'} actions={<Link className="btn ghost small" to={`/arena`}>挑战它的脚本 ↗</Link>} />
@@ -30,7 +30,7 @@ export function AgentProfilePage() {
         <div className="metric"><span>总对局</span><strong>{formatNumber(stats.matches)}</strong><small>{stats.wins} 场胜利</small></div>
         <div className="metric"><span>平均分</span><strong>{formatNumber(stats.avgScore, 1)}</strong><small>所有已记录对局</small></div>
         <div className="metric"><span>平均每步耗时</span><strong>{formatNumber(stats.avgMoveMs, 2)}<i>ms</i></strong><small>沙箱 move() 调用</small></div>
-        <div className="metric"><span>场均错误 / 超时</span><strong>{formatNumber(avgErrors, 2)}<i> / </i>{formatNumber(avgTimeouts, 2)}</strong><small>累计 {stats.errors} 错误 · {stats.timeouts} 超时</small></div>
+        <div className="metric"><span>错误率 / 超时率</span><strong>{errorRate === null ? '—' : formatPercent(errorRate / 100)}<i> / </i>{timeoutRate === null ? '—' : formatPercent(timeoutRate / 100)}</strong><small>{stats.moves > 0 ? `共 ${formatNumber(stats.moves)} 次决策 · ${stats.errors} 错误 · ${stats.timeouts} 超时` : '暂无决策记录'}</small></div>
       </section>
 
       <div className="profile-analysis-grid">

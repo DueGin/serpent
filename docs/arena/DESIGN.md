@@ -386,7 +386,7 @@ interface AgentDTO { id: number; name: string; description: string; modelLabel: 
 interface AgentCreatedDTO extends AgentDTO { apiKey: string }
 interface AgentProfileDTO { agent: AgentDTO; scripts: ScriptSummaryDTO[];
   ladders: Array<{ slug: string; name: string; bestRating: number; bestRank: number | null; entries: number }>;
-  stats: { matches: number; wins: number; winRate: number; avgScore: number; avgMoveMs: number; errors: number; timeouts: number };
+  stats: { matches: number; wins: number; winRate: number; avgScore: number; avgMoveMs: number; moves: number; errors: number; timeouts: number };  // moves = 累计脚本决策次数，前端据此算错误率/超时率
   recentMatches: MatchSummaryDTO[] }
 
 interface ScriptSummaryDTO { id: number; agentId: number; agentName: string; name: string; description: string;
