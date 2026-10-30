@@ -6,6 +6,13 @@ import {
 } from './index';
 import type { ParticipantInput, SimulateResult } from '../types';
 import { createGame, queueDirection, step } from '../game/engine';
+import type { GameMode, MatchConfig } from '../types';
+
+function classicConfig(mode: GameMode, seed: number, maxTicks: number, players: number): MatchConfig {
+  return { ...defaultConfig(mode, { seed, maxTicks, players }), width: mode === 'solo' ? 24 : 28,
+    height: mode === 'solo' ? 16 : 20, wrap: mode === 'score',
+    foodCount: mode === 'solo' ? 1 : Math.max(3, Math.min(4, players)), ruleset: 'classic', maxHp: null };
+}
 
 process.env.RUNNER_WORKERS ??= '2';
 after(async () => { await shutdownRunner(); });
@@ -52,9 +59,11 @@ test('default config obeys tick modes and teams', () => {
   assert.equal(defaultConfig('solo').maxTicks, 1500);
   assert.equal(defaultConfig('score').maxTicks, 500);
   assert.equal(defaultConfig('battle').maxTicks, 1000);
-  assert.equal(defaultConfig('score').wrap, true);
-  assert.equal(defaultConfig('battle', { players: 2 }).foodCount, 3);
-  assert.equal(defaultConfig('battle', { teams: true }).foodCount, 4);
+  assert.equal(defaultConfig('score').wrap, false);
+  assert.equal(defaultConfig('score').width, 64);
+  assert.equal(defaultConfig('solo').maxHp, 100);
+  assert.equal(defaultConfig('battle', { players: 2 }).foodCount, 8);
+  assert.equal(defaultConfig('battle', { teams: true }).foodCount, 16);
   assert.throws(() => defaultConfig('solo', { teams: true }));
 });
 
@@ -64,8 +73,10 @@ test('listScenarios returns eight independent, complete states', () => {
   assert.equal(new Set(scenarios.map((scenario) => scenario.id)).size, scenarios.length);
   scenarios[0]!.state.you.body[0]!.x = -100;
   assert.notEqual(listScenarios()[0]!.state.you.body[0]!.x, -100);
-  const wrap = scenarios.find((scenario) => scenario.id === 'score-wrap')!;
-  assert.ok(wrap.state.legalMoves.includes('left'));
+  const edge = scenarios.find((scenario) => scenario.id === 'edge-wall')!;
+  assert.ok(!edge.state.legalMoves.includes('left'));
+  assert.equal(edge.state.width, 64);
+  assert.equal(scenarios.find((scenario) => scenario.id === 'low-hp-food')?.state.you.hp, 6);
   const trap = scenarios.find((scenario) => scenario.id === 'trap-one-exit')!;
   for (const direction of trap.state.legalMoves) {
     const game = createGame({ config: defaultConfig('solo'), participants: [script('')], foods: trap.state.foods });
@@ -115,7 +126,7 @@ test('init failures disqualify all participants atomically at tick zero and repl
 });
 
 test('fifty consecutive invalid decisions keep direction then disqualify without advancing a tick', async () => {
-  const result = await simulate({ config: defaultConfig('score', { seed: 2, maxTicks: 100, players: 2 }), participants: [
+  const result = await simulate({ config: classicConfig('score', 2, 100, 2), participants: [
     script('function move(){return "NOT_A_MOVE"}'), script('function move(){return false}', 1),
   ] });
   assert.equal(result.ticks, 49);
@@ -169,7 +180,7 @@ test('tick-zero move disqualifications use the same frame semantics as init fail
 });
 
 test('timeouts keep heading and count separately before consecutive failure disqualification', async () => {
-  const result = await simulate({ config: { ...defaultConfig('score', { seed: 3, maxTicks: 60, players: 2 }), moveTimeoutMs: 1 },
+  const result = await simulate({ config: { ...classicConfig('score', 3, 60, 2), moveTimeoutMs: 1 },
     participants: [script('function move(){while(true){}}'), script('function move(){while(true){}}', 1)] });
   assert.equal(result.ticks, 49);
   assert.ok(result.replay.moves.every((move) => move === 'RL'));
@@ -196,7 +207,7 @@ test('CPU budgets disqualify without allowing an unbounded match', async () => {
 
 test('successful decisions reset the consecutive failure counter', async () => {
   const code = 'function move(s){return s.tick%49===48?s.you.dir:"invalid"}';
-  const result = await simulate({ config: defaultConfig('score', { seed: 6, maxTicks: 100, players: 2 }),
+  const result = await simulate({ config: classicConfig('score', 6, 100, 2),
     participants: [script(code), script(code, 1)] });
   assert.equal(result.endReason, 'max_ticks');
   assert.ok(result.participants.every((participant) => participant.invalidMoves === 98 && participant.alive));

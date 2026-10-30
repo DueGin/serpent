@@ -97,7 +97,7 @@ class MetricWorkspace {
     this.foods.fill(0);
     for (const other of game.snakes) {
       if (!other.alive || (other.slot !== snake.slot &&
-        (game.mode !== 'battle' || (game.teams && snake.team === other.team)))) continue;
+        (game.config.ruleset === 'classic' && game.mode !== 'battle' || (game.teams && snake.team === other.team)))) continue;
       for (let index = 0; index < other.body.length - 1; index++) {
         const part = other.body[index];
         this.blocked[part.y * this.width + part.x] = 1;

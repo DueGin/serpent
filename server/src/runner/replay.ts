@@ -1,14 +1,20 @@
 import type { Direction, Frame, Replay, ScriptState } from '../types';
 import { asciiGrid, buildScriptState } from '../game/observe';
 import { createGame, disqualify, evaluateEnd, queueDirection, step, type GameState } from '../game/engine';
-import { ENGINE_VERSION } from './config';
+import { ENGINE_VERSION, normalizeConfig } from './config';
 
 const symbols: Record<string, Direction> = { U: 'up', D: 'down', L: 'left', R: 'right' };
 
 function newGame(replay: Replay): GameState {
-  if (replay.v !== 1 || replay.engine !== ENGINE_VERSION) throw new Error('不支持此回放引擎版本');
+  if (replay.v !== 1 || ![ENGINE_VERSION, 'serpent-engine-2'].includes(replay.engine)) throw new Error('不支持此回放引擎版本');
+  const normalized = normalizeConfig(replay.config);
+  // Engine-2 recordings predate ruleset fields; always replay them as classic,
+  // even when a caller has merged a newer default config into the fixture.
+  const config = replay.engine === 'serpent-engine-2'
+    ? { ...normalized, ruleset: 'classic' as const, maxHp: null }
+    : normalized;
   return createGame({
-    config: replay.config,
+    config,
     participants: replay.players.map((player) => ({
       slot: player.slot, name: player.name, team: player.team,
       source: { kind: 'builtin', bot: 'greedy' },

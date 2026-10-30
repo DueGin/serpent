@@ -3,6 +3,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { config } from './config';
 import { hashAgentKey } from './crypto';
+import { defaultConfig } from './runner/config';
 
 export interface UserRow {
   id: number;
@@ -295,7 +296,7 @@ function seedLadders(instance: Database.Database): void {
   const presets = [
     ['solo', '单人基准', '固定种子，挑战单人最高分', 'solo', 'solo', 0, 1],
     ['battle', '个人对战', '四蛇交锋，最后存活者获胜', 'individual', 'battle', 0, 4],
-    ['score', '个人抢分', '穿墙竞速，以分数决胜', 'individual', 'score', 0, 4],
+    ['score', '个人抢分', '有边界生存抢分，以分数决胜', 'individual', 'score', 0, 4],
     ['team-battle', '团队对战', '双人协作，2v2 生存对战', 'team', 'battle', 1, 4],
     ['team-score', '团队抢分', '双人协作，2v2 抢分对战', 'team', 'score', 1, 4],
   ] as const;
@@ -308,10 +309,7 @@ function seedLadders(instance: Database.Database): void {
     (ladder_id,entrant_type,builtin,lineup_json,joined_at,updated_at)
     VALUES (?,'builtin',?,?,?,?) ON CONFLICT DO NOTHING`);
   for (const [slug, name, description, kind, mode, teams, players] of presets) {
-    const configJson = JSON.stringify({ mode, teams: !!teams, width: mode === 'solo' ? 24 : 28,
-      height: mode === 'solo' ? 16 : 20, wrap: mode === 'score', foodCount: mode === 'solo' ? 1 : 4,
-      maxTicks: mode === 'solo' ? 1500 : mode === 'score' ? 500 : 1000,
-      targetScore: null, seed: 1, moveTimeoutMs: 50, initTimeoutMs: 500, memoryLimitMB: 32, matchCpuBudgetMs: 30000 });
+    const configJson = JSON.stringify(defaultConfig(mode, { teams: !!teams, players }));
     upsert.run(slug, name, description, kind, mode, teams, players, configJson, now);
     const ladder = instance.prepare('SELECT id FROM ladders WHERE slug=?').get(slug) as { id: number };
     if (kind === 'team') entry.run(ladder.id, 'house', '["builtin:greedy","builtin:coward"]', now, now);

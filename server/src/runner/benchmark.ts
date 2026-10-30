@@ -7,9 +7,9 @@ function move(s) {
   var blocked = new Uint8Array(n), goals = new Uint8Array(n), seen = new Uint8Array(n);
   for (var j=0;j<s.snakes.length;j++) {
     var snake=s.snakes[j];
-    if (!snake.alive || snake.id!==s.you.id && (s.mode==='score'||s.teams&&snake.team===s.you.team)) continue;
+    if (!snake.alive || snake.id!==s.you.id && (s.teams&&snake.team===s.you.team || s.mode==='score'&&s.wrap)) continue;
     for(var k=0;k<snake.body.length-(snake.id===s.you.id?1:0);k++) blocked[snake.body[k].y*w+snake.body[k].x]=1;
-    if(snake.id!==s.you.id) for(var d=0;d<4;d++) { var ax=snake.head.x+dx[d],ay=snake.head.y+dy[d]; if(ax>=0&&ay>=0&&ax<w&&ay<h)blocked[ay*w+ax]=1; }
+    if(snake.id!==s.you.id && snake.length>=s.you.length) for(var d=0;d<4;d++) { var ax=snake.head.x+dx[d],ay=snake.head.y+dy[d]; if(s.wrap){ax=(ax+w)%w;ay=(ay+h)%h;} if(ax>=0&&ay>=0&&ax<w&&ay<h)blocked[ay*w+ax]=1; }
   }
   for(var k=0;k<s.foods.length;k++) goals[s.foods[k].y*w+s.foods[k].x]=1;
   var queue=[start], first=[-1]; seen[start]=1; var safe=[];

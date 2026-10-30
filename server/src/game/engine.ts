@@ -11,7 +11,7 @@ import {
   pointsEqual,
 } from '../types';
 
-export const ENGINE_VERSION = 'serpent-engine-2';
+export const ENGINE_VERSION = 'serpent-engine-3';
 
 export interface Snake {
   id: string;
@@ -94,7 +94,7 @@ export function createGame({ config, participants, foods }: CreateGameInput): Ga
   if (!Number.isInteger(config.width) || !Number.isInteger(config.height) ||
       config.width < 8 || config.height < 8 || config.width > 256 || config.height > 256 ||
       !Number.isInteger(config.maxTicks) || config.maxTicks < 1 || config.maxTicks > 1_000_000 ||
-      !Number.isInteger(config.foodCount) || config.foodCount < 0 || config.foodCount > 4 ||
+      !Number.isInteger(config.foodCount) || config.foodCount < 0 || config.foodCount > 64 ||
       !Number.isInteger(config.seed) || config.seed < 0 || config.seed > 0xffffffff ||
       (config.targetScore !== null && (!Number.isFinite(config.targetScore) || config.targetScore <= 0))) {
     throw new Error('Invalid game dimensions or limits');
@@ -212,7 +212,7 @@ export function disqualify(state: GameState, slot: number, opts?: { deferEnd?: b
   if (!opts?.deferEnd) evaluateEnd(state);
 }
 
-export function step(state: GameState): GameState {
+function stepClassic(state: GameState): GameState {
   if (state.status !== 'running') return state;
   state.tick++;
   state.events = [];
@@ -287,6 +287,153 @@ export function step(state: GameState): GameState {
   }
   evaluateEnd(state);
   return state;
+}
+
+function teammate(state: GameState, a: Snake, b: Snake): boolean {
+  return state.teams && a.team === b.team;
+}
+
+/** survival-64 resolves all movement collisions simultaneously, then applies HP. */
+function stepSurvival(state: GameState): GameState {
+  if (state.status !== 'running') return state;
+  state.tick++;
+  state.events = [];
+  const alive = state.snakes.filter((snake) => snake.alive);
+  const nextHeads = new Map<number, Point | null>();
+  const nextBodies = new Map<number, Point[]>();
+  const eating = new Map<number, boolean>();
+  for (const snake of alive) {
+    snake.dir = resolveDir(snake);
+    snake.pendingDir = null;
+    const head = nextCell(snake.body[0]!, snake.dir, state.width, state.height, false);
+    nextHeads.set(snake.slot, head);
+    if (!head) continue;
+    const eats = state.foods.some((food) => pointsEqual(food, head));
+    eating.set(snake.slot, eats);
+    const body = [head, ...snake.body];
+    if (!eats) body.pop();
+    nextBodies.set(snake.slot, body);
+  }
+  const deaths = new Map<number, { reason: DeathReason; killer?: number }>();
+  const headWinners = new Map<number, Set<number>>();
+  const headWin = (winner: Snake, loser: Snake): void => {
+    const previous = deaths.get(loser.slot);
+    if (!previous || previous.reason === 'head') deaths.set(loser.slot, { reason: 'head', killer: winner.slot });
+    const defeated = headWinners.get(winner.slot) ?? new Set<number>();
+    defeated.add(loser.slot);
+    headWinners.set(winner.slot, defeated);
+  };
+  // Boundary deaths are independent of the other collision classes.
+  for (const snake of alive) if (!nextHeads.get(snake.slot)) deaths.set(snake.slot, { reason: 'wall' });
+
+  // Head-to-head: same destination and exchanged old heads. Compare pre-move lengths.
+  const headGroups = new Map<string, Snake[]>();
+  for (const snake of alive) {
+    const head = nextHeads.get(snake.slot);
+    if (!head) continue;
+    const key = pointKey(head);
+    const group = headGroups.get(key) ?? [];
+    group.push(snake); headGroups.set(key, group);
+  }
+  for (const a of alive) for (const b of alive) {
+    if (a.slot >= b.slot || teammate(state, a, b)) continue;
+    const ah = nextHeads.get(a.slot), bh = nextHeads.get(b.slot);
+    if (ah && bh && pointsEqual(ah, b.body[0]!) && pointsEqual(bh, a.body[0]!)) {
+      if (a.body.length === b.body.length) {
+        deaths.set(a.slot, { reason: 'head' }); deaths.set(b.slot, { reason: 'head' });
+      } else {
+        const winner = a.body.length > b.body.length ? a : b;
+        const loser = winner.slot === a.slot ? b : a;
+        headWin(winner, loser);
+      }
+    }
+  }
+  for (const group of headGroups.values()) {
+    if (group.length < 2) continue;
+    const hasRivals = group.some((snake) => group.some((other) => snake !== other && !teammate(state, snake, other)));
+    if (!hasRivals) continue;
+    const maxLength = Math.max(...group.map((snake) => snake.body.length));
+    const longest = group.filter((snake) => snake.body.length === maxLength);
+    if (longest.length === 1) {
+      const winner = longest[0]!;
+      for (const loser of group) {
+        if (loser === winner || teammate(state, winner, loser)) continue;
+        headWin(winner, loser);
+      }
+    } else {
+      // Allies sharing the longest length can coexist; opposing ties both die.
+      const opposingTie = longest.some((snake) => longest.some((other) => snake !== other && !teammate(state, snake, other)));
+      for (const loser of group) {
+        if (longest.includes(loser)) {
+          if (opposingTie) deaths.set(loser.slot, { reason: 'head' });
+        } else {
+          const killers = longest.filter((snake) => !teammate(state, snake, loser));
+          if (killers.length === 1 && !opposingTie) headWin(killers[0]!, loser);
+          else if (killers.length) deaths.set(loser.slot, { reason: 'head' });
+        }
+      }
+    }
+  }
+
+  // Self collisions are checked before body collisions.
+  for (const snake of alive) {
+    if (deaths.has(snake.slot)) continue;
+    const head = nextHeads.get(snake.slot);
+    const body = nextBodies.get(snake.slot) ?? [];
+    if (head && body.slice(1).some((part) => pointsEqual(part, head))) deaths.set(snake.slot, { reason: 'self' });
+  }
+  if (state.mode !== 'solo') {
+    for (const snake of alive) {
+      if (deaths.has(snake.slot)) continue;
+      const head = nextHeads.get(snake.slot);
+      if (!head) continue;
+      for (const other of alive) {
+        if (other.slot === snake.slot || teammate(state, snake, other)) continue;
+        // Only this winner may pass through its defeated opponent's neck/body.
+        if (headWinners.get(snake.slot)?.has(other.slot)) continue;
+        const otherDeath = deaths.get(other.slot);
+        const body = otherDeath ? other.body : (nextBodies.get(other.slot) ?? other.body);
+        const hit = (otherDeath ? body : body.slice(1)).some((part) => pointsEqual(part, head));
+        if (hit) { deaths.set(snake.slot, { reason: 'snake', killer: other.slot }); break; }
+      }
+    }
+  }
+  for (const snake of alive) {
+    const death = deaths.get(snake.slot);
+    if (death) {
+      kill(state, snake, death.reason);
+      if (death.killer !== undefined) {
+        const killer = state.snakes.find((candidate) => candidate.slot === death.killer);
+        if (killer) killer.kills++;
+      }
+      continue;
+    }
+    snake.body = nextBodies.get(snake.slot)!;
+  }
+  const eaten = new Set<string>();
+  for (const snake of alive) {
+    if (!snake.alive) continue;
+    const head = snake.body[0]!;
+    if (eating.get(snake.slot)) {
+      snake.score += 10;
+      if (snake.hp !== null) snake.hp = state.config.maxHp;
+      eaten.add(pointKey(head));
+      state.events.push({ tick: state.tick, type: 'eat', slot: snake.slot, message: `${snake.name} 得分 ${snake.score}` });
+    } else if (snake.hp !== null) {
+      snake.hp--;
+      if (snake.hp <= 0) kill(state, snake, 'starve');
+    }
+  }
+  if (eaten.size) {
+    state.foods = state.foods.filter((food) => !eaten.has(pointKey(food)));
+    fillFood(state);
+  }
+  evaluateEnd(state);
+  return state;
+}
+
+export function step(state: GameState): GameState {
+  return state.config.ruleset === 'classic' ? stepClassic(state) : stepSurvival(state);
 }
 
 function finish(state: GameState, reason: EndReason, winnerSlots: number[], winnerTeam: number | null = null): void {

@@ -169,6 +169,32 @@ function analyzeSpace(start, state, blocked, foodMap) {
   };
 }
 
+function nearestFoodDistance(start, state, blocked, foodMap) {
+  var total = state.width * state.height;
+  var seen = new Uint8Array(total);
+  var queue = [pointIndex(start.x, start.y, state.width)];
+  var head = 0;
+  seen[queue[0]] = 1;
+  for (var distance = 0; head < queue.length; distance += 1) {
+    var levelEnd = queue.length;
+    while (head < levelEnd) {
+      var cell = queue[head++];
+      if (foodMap[cell]) return distance;
+      var x = cell % state.width;
+      var y = Math.floor(cell / state.width);
+      for (var d = 0; d < DELTAS.length; d += 1) {
+        var next = normalize(x + DELTAS[d].x, y + DELTAS[d].y, state);
+        if (!next) continue;
+        var index = pointIndex(next.x, next.y, state.width);
+        if (blocked[index] || seen[index]) continue;
+        seen[index] = 1;
+        queue.push(index);
+      }
+    }
+  }
+  return -1;
+}
+
 function countExits(point, state, blocked) {
   var count = 0;
   for (var d = 0; d < DELTAS.length; d += 1) {
@@ -234,6 +260,55 @@ function fallback(state) {
   return legal.length > 0 ? legal[0] : current;
 }
 
+function nearestFoodMove(state) {
+  var you = state.you, width = state.width, height = state.height;
+  var blocked = buildBlocked(state), foodMap = buildFoodMap(state);
+  var danger = new Uint8Array(width * height);
+  var enemyHeads = [];
+  for (var s = 0; s < state.snakes.length; s += 1) {
+    var enemy = state.snakes[s];
+    if (enemy.alive && enemy.id !== you.id && enemy.head && !(state.teams && enemy.team === you.team)) enemyHeads.push(enemy.head);
+    if (!enemy.alive || enemy.id === you.id || state.teams && enemy.team === you.team || enemy.length < you.length) continue;
+    for (var d = 0; d < DIRECTIONS.length; d += 1) {
+      if (OPPOSITE[enemy.dir] === DIRECTIONS[d]) continue;
+      var threat = nextPoint(enemy.head, DIRECTIONS[d], state);
+      if (threat) danger[pointIndex(threat.x, threat.y, width)] = 1;
+    }
+  }
+  var start = pointIndex(you.head.x, you.head.y, width);
+  var queue = [start], first = [-1], seen = new Uint8Array(width * height);
+  seen[start] = 1;
+  var best = null, bestCost = Infinity;
+  var distance = new Int16Array(width * height);
+  var maxSteps = 36;
+  for (var i = 0; i < queue.length; i += 1) {
+    var cell = queue[i], x = cell % width, y = Math.floor(cell / width);
+    if (distance[cell] >= maxSteps) break;
+    for (var d = 0; d < DIRECTIONS.length; d += 1) {
+      if (i === 0 && state.legalMoves.indexOf(DIRECTIONS[d]) < 0) continue;
+      var next = normalize(x + DELTAS[d].x, y + DELTAS[d].y, state);
+      if (!next) continue;
+      var index = pointIndex(next.x, next.y, width);
+      if (seen[index] || blocked[index] || i === 0 && danger[index]) continue;
+      var initial = i === 0 ? d : first[i];
+      if (foodMap[index]) {
+        var pressure = 0;
+        for (var e = 0; e < enemyHeads.length; e += 1) {
+          var yours = distance[cell] + 1;
+          var theirs = distanceBetween(next, enemyHeads[e], state);
+          if (theirs <= yours) pressure += 8;
+        }
+        var cost = distance[cell] + 1 + pressure;
+        if (cost < bestCost) { bestCost = cost; best = DIRECTIONS[initial]; }
+      }
+      seen[index] = 1;
+      distance[index] = distance[cell] + 1;
+      queue.push(index); first.push(initial);
+    }
+  }
+  return best;
+}
+
 function move(state) {
   var you = state && state.you;
   if (!you || !you.alive || !you.head) {
@@ -242,6 +317,13 @@ function move(state) {
   var legal = state.legalMoves || [];
   if (legal.length === 0) {
     return fallback(state);
+  }
+
+  // On an open 64x64 board, the shortest safe food route dominates broad
+  // space estimates; reserve flood-fill for tactical congestion.
+  if (state.maxHp !== null && state.width >= 64) {
+    var direct = nearestFoodMove(state);
+    if (direct) return direct;
   }
 
   var blocked = buildBlocked(state);
@@ -274,8 +356,8 @@ function move(state) {
     var analysis = analyzeSpace(next, state, nextBlocked, foodMap);
     var exits = countExits(next, state, nextBlocked);
     var headOnRisk = hasHeadOnRisk(next, state);
-    var foodDistance = analysis.nearestFood;
-    var lowHpUrgency = state.maxHp !== null && you.hp !== null && you.hp <= 25;
+    var foodDistance = nearestFoodDistance(next, state, nextBlocked, foodMap);
+    var lowHpUrgency = state.maxHp !== null && you.hp !== null;
     var score = 0;
 
     // 先排除容纳不下身体的区域，安全区域内以有效寻食为主、空间质量为辅。
@@ -289,12 +371,12 @@ function move(state) {
       score -= 900;
     }
 
-    if (analysis.nearestFood >= 0) {
+    if (foodDistance >= 0) {
       var foodWeight = state.mode === 'score' ? 1.45 : 1;
-      score += (2200 / (analysis.nearestFood + 1)) * foodWeight;
+      score += (2200 / (foodDistance + 1)) * foodWeight;
       score += Math.min(analysis.reachableFoods, 4) * 60;
       if (lowHpUrgency && foodDistance < you.hp) {
-        score += 9000 / (foodDistance + 1);
+        score += 12000 / (foodDistance + 1);
       }
     } else {
       score -= 1200;
