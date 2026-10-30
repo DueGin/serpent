@@ -50,10 +50,35 @@ test('flood-fill 在固定 seed 的 battle 中优于内置 greedy', { timeout: 1
     const flood = result.participants.find((participant) => participant.slot === (floodFirst ? 0 : 1));
     const greedy = result.participants.find((participant) => participant.slot === (floodFirst ? 1 : 0));
     assert.ok(flood && greedy);
+    assert.equal(flood.timeouts, 0, `seed=${seed}: flood-fill move() 超时`);
     floodPoints += flood.rank < greedy.rank ? 2 : flood.rank === greedy.rank ? 1 : 0;
     greedyPoints += greedy.rank < flood.rank ? 2 : greedy.rank === flood.rank ? 1 : 0;
     summary += `seed=${seed} flood(rank=${flood.rank},score=${flood.score},alive=${flood.alive}) greedy(rank=${greedy.rank},score=${greedy.score},alive=${greedy.alive})\n`;
   }
 
   assert.ok(floodPoints > greedyPoints, `flood-fill ${floodPoints} 分，greedy ${greedyPoints} 分\n${summary}`);
+});
+
+test('四个 JS 示例在多 seed battle/team-battle 中不超时', { timeout: 180_000 }, async () => {
+  const examples = listExamples().map(({ name }) => {
+    const example = getExample(name);
+    assert.ok(example);
+    return example;
+  });
+  for (const teams of [false, true]) {
+    for (const seed of [41, 173, 509]) {
+      const result = await simulate({
+        config: defaultConfig('battle', { seed, players: 4, teams, maxTicks: 1000 }),
+        participants: examples.map((example, slot) => ({
+          slot, name: example.name, team: teams ? slot % 2 : null,
+          source: { kind: 'script' as const, code: example.code },
+        })),
+        captureLogs: false,
+      });
+      for (const participant of result.participants) {
+        assert.equal(participant.timeouts, 0,
+          `${teams ? 'team-battle' : 'battle'} seed=${seed} ${examples[participant.slot]?.name}: ${participant.firstError ?? '超时'}`);
+      }
+    }
+  }
 });

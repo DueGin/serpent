@@ -32,3 +32,11 @@
 
 - 工人 B 的 Python runner 改动应保留 `runner/jobs.ts` 的 classic engine-2 / survival engine-3 标记逻辑；合并后重跑两个 trace 哈希和 fixture。
 - 跨 worktree 合并时共享类型/API、数据库迁移由协调者维护；历史 score/battle 回放必须继续走 classic。状态文件位于协调者归属的 `docs/arena/**`，本轮按交付要求单独生成。
+
+## 2026-10-31 JS 示例性能跟进
+
+- 先快进合并 `master`（`b812f42`，含撞身体 slot 顺序修复和前端）。仅修改三个 JS 策略、示例测试、benchmark 与此状态文件。
+- 三个寻路脚本使用每局复用的 `Int32Array` 邻接索引、`Uint8Array` 棋盘/访问位图和整数 BFS 队列；寻食 BFS 最多处理 2400 个节点，空间洪泛达到 `max(64, 2 * (身长 + 3))` 后停止。组队脚本一次寻食 BFS 做队友竞争评估，不再按方向计算队友/敌人的距离图。
+- 本机 M 系列，64×64、4 人、1000 拍，battle/team-battle 各 seed 41、173、509（共 6 局），加权平均 / 六局最大单拍，单位 ms：`straight` 0.068–0.104 / 1.093；`greedy-bfs` 0.206–0.210 / 5.477；`flood-fill` 0.982–1.015 / 8.472；`team-aware` 0.986–1.014 / 8.060。六局所有脚本 timeouts/errors 均为 0；每脚本平均 <3ms、峰值 <10ms。
+- 改前实测（协调者反馈）：`greedy-bfs` 平均 1.2 / 峰值 8；`flood-fill` 平均 2–2.5 / 偶发 21；`team-aware` 平均 24 / 峰值 31、整局 CPU 3.6–5.4s。优化后分别约 0.21 / 5.48、约 1.0 / 8.47、约 1.0 / 8.06；`straight` 无改前基线。
+- `examples.test.ts` 保留全部 validateScript 与固定六 seed flood-fill 严格优于 greedy，新增固定 seed 中 flood-fill 零超时及四示例在三 seed 的 battle/team-battle 零超时。`pnpm --filter server test` 189/189 通过；`cd server && npx tsc --noEmit` 通过。`benchmark.ts` 现打印各模式、种子、脚本的 avg/max 和超时数。

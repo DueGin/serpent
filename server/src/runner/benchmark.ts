@@ -1,4 +1,5 @@
 import { defaultConfig, shutdownRunner, simulate } from './index';
+import { getExample, listExamples } from '../mcp/examples';
 
 export const BFS_SCRIPT = String.raw`
 function move(s) {
@@ -36,21 +37,29 @@ function move(s) {
 export async function runBenchmark(): Promise<void> {
   const started = performance.now();
   try {
-    const result = await simulate({
-      config: defaultConfig('battle', { seed: 132, players: 4, maxTicks: 1000 }),
-      participants: Array.from({ length: 4 }, (_, slot) => ({
-        slot, name: `BFS-${slot}`, team: null,
-        source: { kind: 'script' as const, code: BFS_SCRIPT },
-      })),
-      captureLogs: false,
+    const examples = listExamples().map(({ name }) => {
+      const example = getExample(name);
+      if (!example) throw new Error(`缺少示例 ${name}`);
+      return example;
     });
-    console.log(JSON.stringify({
-      seed: 132, ticks: result.ticks, endReason: result.endReason,
-      durationMs: result.durationMs, totalMs: Math.round(performance.now() - started),
-      participants: result.participants.map(({ slot, score, moves, errors, timeouts, invalidMoves, avgMoveMs, maxMoveMs }) => ({
-        slot, score, moves, errors, timeouts, invalidMoves, avgMoveMs, maxMoveMs,
-      })),
-    }, null, 2));
+    for (const teams of [false, true]) {
+      for (const seed of [41, 173, 509]) {
+        const result = await simulate({
+          config: defaultConfig('battle', { seed, players: 4, teams, maxTicks: 1000 }),
+          participants: examples.map((example, slot) => ({
+            slot, name: example.name, team: teams ? slot % 2 : null,
+            source: { kind: 'script' as const, code: example.code },
+          })),
+          captureLogs: false,
+        });
+        console.log(JSON.stringify({ mode: teams ? 'team-battle' : 'battle', seed, ticks: result.ticks,
+          durationMs: result.durationMs,
+          participants: result.participants.map(({ slot, moves, timeouts, errors, avgMoveMs, maxMoveMs }) =>
+            ({ name: examples[slot]?.name, moves, timeouts, errors, avgMoveMs, maxMoveMs })),
+        }));
+      }
+    }
+    console.log(`总耗时 ${Math.round(performance.now() - started)}ms`);
   } finally { await shutdownRunner(); }
 }
 
