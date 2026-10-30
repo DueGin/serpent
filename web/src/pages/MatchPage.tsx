@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { BUILTIN_LABEL, getMatch, getReplay } from '../api';
+import { BUILTIN_LABEL, getMatch, getMatchReview, getReplay } from '../api';
 import { Arena } from '../components/Arena';
+import { MatchReviewPanel } from '../components/MatchReviewPanel';
+import { useAsync } from '../hooks';
+import { useReviewFrame } from '../hooks/useReviewFrame';
 import { PLAYBACK_TICK_MS } from '../types';
 import type { Frame, FrameEvent, MatchDetailDTO, MatchParticipantDTO, ReplayDTO } from '../types';
 import {
@@ -40,6 +43,7 @@ export function MatchPage() {
   const [revealed, setRevealed] = useState(false);
   const [followLive, setFollowLive] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
+  const [reviewSlot, setReviewSlot] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,6 +105,26 @@ export function MatchPage() {
   const liveActive = Boolean(match?.live && broadcastAt != null && clock < broadcastAt + playbackMs);
   const followingLive = followLive && liveActive;
   const hasFrames = Boolean(replay?.frames.length);
+  const reviewEnabled = validId && match?.status === 'done' && !liveActive;
+  const {
+    data: fetchedReview,
+    loading: reviewLoading,
+    error: reviewError,
+    reload: reloadReview,
+  } = useAsync(async () => reviewEnabled ? getMatchReview(matchId, { series: 1 }) : null, [matchId, reviewEnabled]);
+  const review = fetchedReview?.matchId === matchId ? fetchedReview : null;
+  const reviewPaused = Boolean(review && revealed && !playing && !followingLive && !liveActive);
+  const {
+    review: frameReview,
+    loading: frameReviewLoading,
+    error: frameReviewError,
+  } = useReviewFrame(matchId, frame?.tick ?? null, reviewSlot, reviewPaused);
+
+  useEffect(() => {
+    if (!review || review.participants.some((participant) => participant.slot === reviewSlot)) return;
+    const first = review.participants[0];
+    if (first) setReviewSlot(first.slot);
+  }, [review, reviewSlot]);
 
   useEffect(() => {
     if (!match?.live || broadcastAt == null || !liveActive) return;
@@ -164,6 +188,13 @@ export function MatchPage() {
     setPlaying(false);
     setFrameIndex(next);
     if (next < maxIndex) setRevealed(false);
+  }
+
+  function seekReviewTick(tick: number) {
+    if (!replay) return;
+    const index = replay.frames.findIndex((item) => item.tick >= tick);
+    selectFrame(index < 0 ? maxIndex : index);
+    if (!liveActive) setRevealed(true);
   }
 
   function togglePlayback() {
@@ -252,7 +283,12 @@ export function MatchPage() {
       <div className="play match-layout">
         <main className="match-main">
           <div className="cabinet match-cabinet">
-            <Arena frame={frame} config={replay.config} players={replay.players} />
+            <Arena
+              frame={frame}
+              config={replay.config}
+              players={replay.players}
+              overlay={frameReview ? { slot: reviewSlot, options: frameReview.options } : undefined}
+            />
             <div className="scan" />
             {followingLive && <div className="match-live-badge">直播中</div>}
           </div>
@@ -315,7 +351,41 @@ export function MatchPage() {
         </aside>
       </div>
 
-      <OwnerLogs participants={match.participants} />
+      {liveActive || match.status !== 'done' ? (
+        <section className="panel review-gate">
+          <div className="eyebrow">对局复盘</div><h2>逐拍复盘</h2>
+          <p>{liveActive ? '直播结束后可查看完整复盘，避免提前剧透结果。' : '对局完成后可查看完整复盘。'}</p>
+        </section>
+      ) : !revealed ? (
+        <section className="panel review-gate">
+          <div className="eyebrow">对局复盘</div><h2>逐拍复盘</h2>
+          <p>复盘包含关键时刻、死亡归因和赛果。揭晓结果后即可查看，也可先继续观看回放。</p>
+          <button className="btn ghost" onClick={() => setRevealed(true)}>揭晓结果并查看复盘</button>
+        </section>
+      ) : reviewLoading && !review ? (
+        <section className="panel review-gate" role="status"><h2>正在生成复盘视图…</h2><p>回放仍可正常播放。</p></section>
+      ) : reviewError && !review ? (
+        <section className="panel review-gate review-load-error" role="alert">
+          <h2>复盘数据加载失败</h2><p>{reviewError}。原有回放不受影响。</p>
+          <button className="btn ghost" onClick={reloadReview}>重试复盘</button>
+        </section>
+      ) : review ? (
+        <MatchReviewPanel
+          review={review}
+          currentTick={frame.tick}
+          selectedSlot={reviewSlot}
+          onSelectSlot={setReviewSlot}
+          onSeek={seekReviewTick}
+          paused={reviewPaused}
+          frameReview={frameReview}
+          frameLoading={frameReviewLoading}
+          frameError={frameReviewError}
+        />
+      ) : (
+        <section className="panel review-gate"><h2>暂无复盘数据</h2><button className="btn ghost" onClick={reloadReview}>重新加载</button></section>
+      )}
+
+      <OwnerLogs participants={review?.participants ?? match.participants} currentTick={frame.tick} onSeek={seekReviewTick} />
     </div>
   );
 }
@@ -445,26 +515,38 @@ function ParticipantCard({ participant, frame, revealed }: { participant: MatchP
   );
 }
 
-function OwnerLogs({ participants }: { participants: MatchParticipantDTO[] }) {
+function OwnerLogs({ participants, currentTick, onSeek }: {
+  participants: Array<Pick<MatchParticipantDTO, 'slot' | 'name' | 'logs'>>;
+  currentTick: number;
+  onSeek: (tick: number) => void;
+}) {
   const withLogs = participants.filter((participant) => participant.logs && participant.logs.length > 0);
   if (withLogs.length === 0) return null;
   return (
     <section className="panel match-owner-logs">
       <h3>所有者日志</h3>
-      <p className="hint">脚本日志由服务端按权限返回，仅脚本所有者可见。</p>
-      {withLogs.map((participant) => (
-        <details key={participant.slot}>
-          <summary>{participant.name} · {participant.logs?.length ?? 0} 条</summary>
-          <ol>
-            {participant.logs?.map((log, index) => (
-              <li key={`${log.tick}-${index}`}>
-                <span className="match-log-tick">#{log.tick}</span>
-                <pre>{log.text}</pre>
-              </li>
-            ))}
-          </ol>
-        </details>
-      ))}
+      <p className="hint">仅脚本所有者可见；优先显示当前第 {currentTick} 拍前后 12 拍的日志，点击拍号跳拍并暂停。</p>
+      {withLogs.map((participant) => {
+        const logs = participant.logs ?? [];
+        const nearby = logs.filter((log) => Math.abs(log.tick - currentTick) <= 12);
+        const aligned = (nearby.length > 0 ? nearby : logs.slice().sort((a, b) => (
+          Math.abs(a.tick - currentTick) - Math.abs(b.tick - currentTick) || a.tick - b.tick
+        )).slice(0, 16)).slice().sort((a, b) => a.tick - b.tick);
+        return (
+          <details key={participant.slot}>
+            <summary>{participant.name} · 共 {logs.length} 条 · 当前显示 {aligned.length} 条</summary>
+            {nearby.length === 0 && <p className="hint">当前拍附近没有日志，改显示最接近的条目。</p>}
+            <ol>
+              {aligned.map((log, index) => (
+                <li key={`${log.tick}-${index}`}>
+                  <button className="match-log-seek" onClick={() => onSeek(log.tick)} aria-label={`跳到第 ${log.tick} 拍`}>#{log.tick}</button>
+                  <pre>{log.text}</pre>
+                </li>
+              ))}
+            </ol>
+          </details>
+        );
+      })}
     </section>
   );
 }

@@ -38,7 +38,7 @@ export interface TeamRow {
 }
 
 let db: Database.Database | null = null;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export function getDb(): Database.Database {
   if (!db) db = openDatabase(config.dbPath);
@@ -60,12 +60,20 @@ export function openDatabase(file: string): Database.Database {
     if (version > SCHEMA_VERSION) throw new Error('Database schema is newer than this server');
     if (version < 1) instance.transaction(() => migrateV1(instance))();
     if (version < 2) instance.transaction(() => migrateV2(instance))();
+    if (version < 3) instance.transaction(() => migrateV3(instance))();
     instance.transaction(() => seedLadders(instance))();
     return instance;
   } catch (err) {
     instance.close();
     throw err;
   }
+}
+
+function migrateV3(instance: Database.Database): void {
+  instance.exec(`
+    ALTER TABLE matches ADD COLUMN trace_blob BLOB;
+    PRAGMA user_version = 3;
+  `);
 }
 
 function migrateV2(instance: Database.Database): void {

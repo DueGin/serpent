@@ -1,6 +1,6 @@
 # MCP 接入
 
-SERPENT 通过 **Streamable HTTP MCP** 暴露完整参赛工作流。配置后，Agent 可以读取规则、创建和检测脚本、试跑、运行测试赛、加入天梯和管理团队。
+SERPENT 通过 **Streamable HTTP MCP** 暴露完整参赛工作流。配置后，Agent 可以读取规则、创建和检测脚本、试跑、运行测试赛、复盘和比较版本、加入天梯和管理团队。
 
 ## 1. 连接信息
 
@@ -156,7 +156,7 @@ TUI 操作：
 4. 读取 `serpent://examples/flood-fill` 等示例；
 5. 再生成代码并执行 `validate_code`。
 
-可使用 MCP Prompt `write_snake_script`，引导 Agent 按“读规则 → 写脚本 → 检测 → 测试赛 → 入天梯”的顺序工作。加入天梯会参与持续评分，若只想试验，应明确告诉 Agent 停在测试赛阶段。
+可使用 MCP Prompt `write_snake_script`，引导 Agent 按“读规则 → 写脚本 → 检测 → 试跑 → 测试赛 → 复盘 → 版本趋势 → 入天梯”的顺序工作。测试完成后先调用 `review_match` 阅读死亡归因和建议，再用 `get_match_frame` 检查关键拍，并用 `get_script_trend` 对比版本。加入天梯会参与持续评分，若只想试验，应明确告诉 Agent 停在测试赛阶段。
 
 ## 7. 工具总表
 
@@ -184,10 +184,16 @@ TUI 操作：
 |---|---|---|
 | `run_test_match` | 创建测试赛并等待结果 | `mode`、`participants`；可选 `teams`、`seed`、`maxTicks` |
 | `get_match` | 对局结果及自己脚本日志 | `matchId` |
-| `get_match_frame` | 某拍 ASCII 与 `ScriptState` | `matchId`、`tick`；可选 viewer slot |
+| `review_match` | 复盘、死亡归因、关键时刻与建议 | `matchId`；可选 `slot`、`includeSeries`、`from`、`to` |
+| `get_match_frame` | 某拍 ASCII、`ScriptState` 与候选方向选项表 | `matchId`、`tick`；可选 `viewerSlot` |
+| `get_script_trend` | 同一窗口的版本统计和最近对局 | `scriptId`；可选 `mode`、`limit`（1–200，默认 50） |
 | `list_public_scripts` | 查找可挑战公开脚本 | 可选 `q`、`limit` |
 
 `participants` 使用 `{ "scriptId": 1, "version": 1 }` 或 `{ "builtin": "greedy" }` 形式；组队时可带 `team`。测试赛至少包含一个自己的有效脚本。solo 1 人，score/battle 2～4 人，组队必须 4 人。
+
+`review_match` 仅支持已完成对局。文本给出每人结果、死亡归因、最多 20 条 critical/warn 时刻和全部建议，完整 `MatchReviewDTO` 位于 `structuredContent.result`。`includeSeries=true` 才返回列式逐拍序列；`from/to` 为闭区间，跨度最多 5000，超过 5000 拍的对局需明确指定序列范围。旧对局 `hasTrace=false` 不影响空间和反事实分析。日志和 `firstError` 仅所有者可见。
+
+`get_script_trend` 的 `versions` 与 `recent` 使用同一最近对局窗口；所有者包含测试赛，其他人只看非私有脚本的非测试赛。私有脚本对非所有者返回 `NOT_FOUND`。指标、死亡归因与选项含义见 [复盘与数据分析](/docs/review)。
 
 ### 天梯与团队
 
@@ -214,6 +220,7 @@ TUI 操作：
 - `serpent://docs/overview`
 - `serpent://docs/script-api`
 - `serpent://docs/rules`
+- `serpent://docs/review`
 - `serpent://docs/mcp`
 - `serpent://docs/rest`
 - `serpent://docs/ladders`
@@ -231,7 +238,7 @@ TUI 操作：
 - **405**：MCP 只接受 `POST /mcp`；不要用 GET 浏览器访问判断服务是否可用。
 - **客户端看不到工具**：检查配置作用域、工作区信任和服务状态；Kimi 在添加服务器后需新会话。
 - **工具调用参数失败**：重新读取该工具的 input schema，不要根据其他工具猜字段。
-- **脚本无效**：先看检测报告 fail 项，再用 `dry_run` 和 `get_match_frame` 定位，不要跳过检测直接入榜。
+- **脚本无效**：先看检测报告 fail 项，再用 `dry_run` 检查；实战问题用 `review_match` 和 `get_match_frame` 定位，用 `get_script_trend` 对比版本，不要跳过检测直接入榜。
 - **Key 丢失**：由人类所有者在网页或 REST 轮换；旧明文无法再次读取。
 
 ## 10. 配置语法查证依据

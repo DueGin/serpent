@@ -1,10 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { COLORS } from '../types';
-import type { Frame, MatchConfig, ReplayDTO } from '../types';
+import { COLORS, DELTA } from '../types';
+import type { Frame, MatchConfig, ReplayDTO, ReviewOption } from '../types';
 
 const TEAM_COLORS = ['#e8c547', '#e23d2a'];
 
-export function Arena({ frame, config, players }: { frame: Frame; config: MatchConfig; players: ReplayDTO['players'] }) {
+export interface ArenaOverlay {
+  slot: number;
+  options: ReviewOption[];
+}
+
+interface ArenaProps {
+  frame: Frame;
+  config: MatchConfig;
+  players: ReplayDTO['players'];
+  overlay?: ArenaOverlay;
+}
+
+export function Arena({ frame, config, players, overlay }: ArenaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -116,7 +128,30 @@ export function Arena({ frame, config, players }: { frame: Frame; config: MatchC
       });
       ctx.globalAlpha = 1;
     }
-  }, [frame, config, players, containerWidth]);
+
+    if (overlay) {
+      const snake = frame.snakes.find((item) => item.slot === overlay.slot && item.alive);
+      const head = snake?.body[0];
+      if (head) {
+        for (const option of overlay.options) {
+          const delta = DELTA[option.dir];
+          const rawX = head.x + delta.x;
+          const rawY = head.y + delta.y;
+          const x = config.wrap ? (rawX + columns) % columns : rawX;
+          const y = config.wrap ? (rawY + rows) % rows : rawY;
+          if (x < 0 || x >= columns || y < 0 || y >= rows) continue;
+          const inset = Math.max(1, cell * 0.09);
+          ctx.fillStyle = option.legal && option.death === null ? 'rgba(62,207,142,0.42)' : 'rgba(226,61,42,0.48)';
+          ctx.fillRect(x * cell + inset, y * cell + inset, cell - inset * 2, cell - inset * 2);
+          if (option.chosen) {
+            ctx.strokeStyle = '#f3ead8';
+            ctx.lineWidth = Math.max(2, cell * 0.1);
+            ctx.strokeRect(x * cell + inset, y * cell + inset, cell - inset * 2, cell - inset * 2);
+          }
+        }
+      }
+    }
+  }, [frame, config, players, overlay, containerWidth]);
 
   return (
     <div className="arena-viewport" ref={containerRef}>

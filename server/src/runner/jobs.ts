@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import {
-  type CheckItem, type CheckReport, type Direction, type DryRunInput, type DryRunResult,
+  type CheckItem, type CheckReport, type DecisionTrace, type Direction, type DryRunInput, type DryRunResult,
   type InitInfo, type ParticipantResult, type Replay, type ScriptState,
   type SimulateInput, type SimulateResult, COLORS, OPPOSITE,
 } from '../types';
@@ -65,6 +65,7 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
       team: participant.team, color: COLORS[participant.slot]! })),
     moves: [],
   };
+  const trace: DecisionTrace = { v: 1, codes: [], ms: [] };
   const kill = (slot: number, phase: 'init' | 'move') => {
     replay.disqualifications ??= [];
     replay.disqualifications.push({ tick: state.tick, slot, phase });
@@ -113,6 +114,8 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
     }
     evaluateEnd(state);
     while (state.status === 'running') {
+      const codes = participants.map(() => '.');
+      const elapsed: Array<number | null> = participants.map(() => null);
       const choices = new Map<number, Direction>();
       const alive = state.snakes.filter((snake) => snake.alive);
       // Every participant sees the same pre-tick world, including when a peer
@@ -120,9 +123,11 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
       const observations = new Map(alive.map((snake) => [snake.slot, buildScriptState(state, snake.slot)]));
       const pendingDisqualifications: number[] = [];
       for (const snake of alive) {
+        const playerIndex = participants.findIndex((candidate) => candidate.slot === snake.slot);
         const stat = stats.get(snake.slot)!;
         const participant = participants.find((candidate) => candidate.slot === snake.slot)!;
         if (participant.source.kind === 'builtin') {
+          codes[playerIndex] = 'b';
           choices.set(snake.slot, chooseMove(state, snake.slot, participant.source.bot));
           stat.moves++;
           continue;
@@ -134,19 +139,27 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
         stat.moveMs += result.elapsedMs;
         stat.maxMoveMs = Math.max(stat.maxMoveMs, result.elapsedMs);
         stat.cpuMs += cpuClock() - cpuStarted;
+        elapsed[playerIndex] = Math.round(result.elapsedMs * 100) / 100;
         logs(snake.slot);
         let direction = snake.dir;
-        if (result.error || result.timeout) failed(stat, result, 'move');
+        if (result.error || result.timeout) {
+          codes[playerIndex] = result.timeout ? 't' : 'e';
+          failed(stat, result, 'move');
+        }
         else if (!result.direction || result.direction === OPPOSITE[snake.dir]) {
+          codes[playerIndex] = result.direction ? 'r' : 'i';
           stat.invalidMoves++;
           stat.consecutive++;
           firstError(stat, result.direction ? '禁止 180 度掉头' : 'move() 返回非法方向');
-        } else { direction = result.direction; stat.consecutive = 0; }
+        } else { codes[playerIndex] = 'o'; direction = result.direction; stat.consecutive = 0; }
         if (stat.consecutive >= 50 || stat.cpuMs > input.config.matchCpuBudgetMs) {
           if (stat.cpuMs > input.config.matchCpuBudgetMs) firstError(stat, '累计 CPU 预算已耗尽');
           pendingDisqualifications.push(snake.slot);
         } else choices.set(snake.slot, direction);
       }
+      // 先记录本轮决策；失格可能直接结束比赛，不再产生下一条 move。
+      trace.codes.push(codes.join(''));
+      trace.ms.push(elapsed);
       for (const slot of pendingDisqualifications) kill(slot, 'move');
       evaluateEnd(state);
       if (state.status !== 'running') break;
@@ -170,7 +183,7 @@ export async function runSimulation(input: SimulateInput): Promise<SimulateResul
           alive: snake.alive, deathTick: snake.deathTick, deathReason: snake.deathReason, kills: snake.kills,
           avgMoveMs: round(stat.moves ? moveMs / stat.moves : 0), maxMoveMs: round(stat.maxMoveMs), cpuMs: round(stat.cpuMs) };
       }),
-      replay, durationMs: round(performance.now() - started),
+      replay, trace, durationMs: round(performance.now() - started),
     };
   } finally {
     for (const sandbox of sandboxes.values()) sandbox.dispose();

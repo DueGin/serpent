@@ -9,16 +9,19 @@ import type {
   DocSummary,
   DryRunResult,
   FrameDTO,
+  GameMode,
   LadderDTO,
   LadderEntryDTO,
   LeaderboardRow,
   MatchDetailDTO,
+  MatchReviewDTO,
   MatchSummaryDTO,
   PlatformStats,
   ReplayDTO,
   ScenarioInfo,
   ScriptDetailDTO,
   ScriptSummaryDTO,
+  ScriptTrendDTO,
   ScriptVersionDTO,
   TeamDTO,
 } from './types';
@@ -90,6 +93,7 @@ export const updateScript = (id: number, input: { name?: string; description?: s
 export const archiveScript = (id: number) => send<{ ok: boolean }>(`/scripts/${id}`, 'DELETE');
 export const addScriptVersion = (id: number, input: { code: string; note?: string; activate?: boolean }) => send<ScriptVersionDTO>(`/scripts/${id}/versions`, 'POST', input);
 export const getScriptVersion = (id: number, version: number) => req<ScriptVersionDTO>(`/scripts/${id}/versions/${version}`);
+export const getScriptTrend = (id: number, params: { mode?: GameMode; limit?: number } = {}) => req<ScriptTrendDTO>(`/scripts/${id}/trend${query(params)}`);
 export const validateScript = (code: string) => send<CheckReport>('/scripts/validate', 'POST', { code });
 export const dryRunScript = (input: { code?: string; scriptId?: number; version?: number; scenario?: string; state?: unknown; init?: unknown }) => send<DryRunResult>('/scripts/dry-run', 'POST', input);
 export const getScenarios = () => req<{ data: ScenarioInfo[] }>('/scripts/scenarios');
@@ -100,6 +104,7 @@ export const listLiveMatches = () => req<{ data: MatchSummaryDTO[] }>('/matches/
 export const getMatch = (id: number) => req<MatchDetailDTO>(`/matches/${id}`);
 export const getReplay = (id: number) => req<ReplayDTO>(`/matches/${id}/replay`);
 export const getMatchFrame = (id: number, tick: number, viewer?: number) => req<FrameDTO>(`/matches/${id}/frames/${tick}${query({ viewer })}`);
+export const getMatchReview = (id: number, params: { slot?: number; series?: 1; from?: number; to?: number } = {}) => req<MatchReviewDTO>(`/matches/${id}/review${query(params)}`);
 
 export const listLadders = () => req<{ data: LadderDTO[] }>('/ladders');
 export const getLadder = (slug: string) => req<LadderDTO>(`/ladders/${slug}`);

@@ -25,7 +25,9 @@ function script(code: string, slot = 0): ParticipantInput {
 }
 const greedy: ParticipantInput = { slot: 1, name: 'greedy', team: null, source: { kind: 'builtin', bot: 'greedy' } };
 function deterministic(result: SimulateResult) {
-  return { ...result, durationMs: 0, participants: result.participants.map((entry) => ({
+  return { ...result, durationMs: 0,
+    trace: result.trace ? { ...result.trace, ms: result.trace.ms.map(row => row.map(() => null)) } : undefined,
+    participants: result.participants.map((entry) => ({
     ...entry, avgMoveMs: 0, maxMoveMs: 0, cpuMs: 0,
   })) };
 }

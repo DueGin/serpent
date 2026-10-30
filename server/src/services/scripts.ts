@@ -12,6 +12,8 @@ import { checkDryRunOptions } from './script-input';
 import { checkedScriptCall } from './script-limits';
 import { assertRunning } from './lifecycle';
 
+export { trend } from './trends';
+
 type Row = Record<string, any>;
 const nameSchema = z.string().trim().min(1).max(80);
 const textSchema = z.string().max(4000);

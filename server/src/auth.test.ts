@@ -59,7 +59,9 @@ describe('database migrations', () => {
         INSERT INTO agents VALUES (9,42,'old-agent','https://example.test','enc1:legacy-secret','old prompt');`);
       legacy.close();
       const migrated = openDatabase(file);
-      assert.equal(migrated.pragma('user_version', { simple: true }), 2);
+      assert.equal(migrated.pragma('user_version', { simple: true }), 3);
+      const matchColumns = migrated.pragma('table_info(matches)') as Array<{ name: string; type: string }>;
+      assert.ok(matchColumns.some(column => column.name === 'trace_blob' && column.type === 'BLOB'));
       assert.equal((migrated.prepare('SELECT username FROM users WHERE id=42').get() as { username: string }).username, 'legacy');
       assert.equal((migrated.prepare('SELECT name FROM agents_legacy WHERE id=9').get() as { name: string }).name, 'old-agent');
       const agentColumns = migrated.pragma('table_info(agents)') as Array<{ name: string }>;
@@ -86,6 +88,7 @@ describe('database migrations', () => {
       old.exec(`ALTER TABLE ladder_entries DROP COLUMN authorized_user_id;
         ALTER TABLE ladder_entries DROP COLUMN authorized_agent_id;
         ALTER TABLE ladder_entries DROP COLUMN inactive_reason;
+        ALTER TABLE matches DROP COLUMN trace_blob;
         PRAGMA user_version=1;
         INSERT INTO users VALUES(1,'owner','hash',0);
         INSERT INTO agents(id,user_id,name,api_key_hash,api_key_prefix,created_at,updated_at)
@@ -97,11 +100,29 @@ describe('database migrations', () => {
       const migrated = openDatabase(file);
       const entry = migrated.prepare("SELECT active,inactive_reason,authorized_user_id FROM ladder_entries WHERE entrant_type='team'").get() as
         { active: number; inactive_reason: string; authorized_user_id: number | null };
-      assert.equal(migrated.pragma('user_version', { simple: true }), 2);
+      assert.equal(migrated.pragma('user_version', { simple: true }), 3);
       assert.equal(entry.active, 0);
       assert.match(entry.inactive_reason, /重新确认/);
       assert.equal(entry.authorized_user_id, null);
       assert.equal((migrated.prepare("SELECT count(*) AS n FROM ladder_entries WHERE entrant_type='builtin' AND active=1").get() as { n: number }).n, 11);
+      migrated.close();
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('adds nullable telemetry to v2 matches without changing replay data', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'serpent-migration-v3-'));
+    const file = path.join(directory, 'arena.db');
+    try {
+      const old = openDatabase(file);
+      old.exec('ALTER TABLE matches DROP COLUMN trace_blob; PRAGMA user_version=2;');
+      const replay = Buffer.from('历史回放');
+      old.prepare(`INSERT INTO matches(kind,mode,status,seed,config_json,replay_blob,created_at)
+        VALUES('test','solo','done',1,'{}',?,0)`).run(replay);
+      old.close();
+      const migrated = openDatabase(file);
+      assert.equal(migrated.pragma('user_version', { simple: true }), 3);
+      const row = migrated.prepare('SELECT replay_blob,trace_blob FROM matches').get() as { replay_blob: Buffer; trace_blob: Buffer | null };
+      assert.deepEqual(row.replay_blob, replay);
+      assert.equal(row.trace_blob, null);
       migrated.close();
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });

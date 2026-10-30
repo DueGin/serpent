@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import type http from 'node:http';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import type Database from 'better-sqlite3';
 import { after, before, test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -24,6 +27,7 @@ const textResultSchema = z.object({
   content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()),
   structuredContent: z.record(z.unknown()).optional(),
 }).passthrough();
+const execFileAsync = promisify(execFile);
 
 function resultText(result: z.infer<typeof textResultSchema>): string {
   return result.content.map((item) => item.text || '').join('\n');
@@ -136,7 +140,7 @@ test('MCP SDK Client 完整参赛流程', { timeout: 300_000 }, async (t) => {
     const required = [
       'whoami', 'get_rules', 'list_scenarios', 'validate_code', 'dry_run', 'list_scripts', 'get_script',
       'create_script', 'update_script', 'set_script_meta', 'archive_script', 'run_test_match', 'get_match',
-      'get_match_frame', 'list_public_scripts', 'list_ladders', 'get_leaderboard', 'join_ladder',
+      'get_match_frame', 'review_match', 'get_script_trend', 'list_public_scripts', 'list_ladders', 'get_leaderboard', 'join_ladder',
       'leave_ladder', 'my_ladder_entries', 'queue_ladder_match', 'create_team', 'join_team',
       'leave_team', 'get_team', 'set_team_lineup',
     ];
@@ -144,9 +148,15 @@ test('MCP SDK Client 完整参赛流程', { timeout: 300_000 }, async (t) => {
 
     const resources = await client1.listResources();
     assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://docs/rules'));
+    assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://docs/review'));
     assert.ok(resources.resources.some((resource) => resource.uri === 'serpent://examples/flood-fill'));
+    const reviewDoc = await client1.readResource({ uri: 'serpent://docs/review' });
+    assert.match(JSON.stringify(reviewDoc.contents), /复盘与数据分析/);
+    assert.match(JSON.stringify(reviewDoc.contents), /hadSafeAlternative/);
     const prompt = await client1.getPrompt({ name: 'write_snake_script', arguments: { mode: 'battle' } });
     assert.ok(prompt.messages.length > 0);
+    assert.match(JSON.stringify(prompt.messages), /review_match/);
+    assert.match(JSON.stringify(prompt.messages), /get_script_trend/);
   });
 
   await t.test('REST 文档与 whoami/get_rules/list_scenarios', async () => {
@@ -223,10 +233,144 @@ test('MCP SDK Client 完整参赛流程', { timeout: 300_000 }, async (t) => {
     assert.equal(match.participants.length, 2);
     const fetched = await call(client1, 'get_match', { matchId }, matchSchema);
     assert.equal(fetched.id, matchId);
-    const frame = await call(client1, 'get_match_frame', { matchId, tick: 0, viewerSlot: 0 },
-      z.object({ matchId: z.number(), ascii: z.string(), state: z.record(z.unknown()) }).passthrough());
+    const rawFrame = textResultSchema.parse(await client1.callTool({ name: 'get_match_frame', arguments: { matchId, tick: 0, viewerSlot: 0 } }));
+    assert.notEqual(rawFrame.isError, true, resultText(rawFrame));
+    assert.ok(rawFrame.structuredContent);
+    const frame = z.object({
+      matchId: z.number(), ascii: z.string(), state: z.record(z.unknown()),
+      review: z.object({ tick: z.number(), slot: z.number(), options: z.array(z.object({ dir: z.string() }).passthrough()) }).nullable(),
+    }).passthrough().parse(rawFrame.structuredContent.result);
     assert.equal(frame.matchId, matchId);
     assert.ok(frame.ascii.length > 0);
+    assert.equal(frame.review?.options.length, 3);
+    assert.match(resultText(rawFrame), /方向 \| 合法 \| 反事实死因 \| 可达空间 \| 实际选择/);
+    const finalFrame = textResultSchema.parse(await client1.callTool({
+      name: 'get_match_frame', arguments: { matchId, tick: match.ticks, viewerSlot: 0 },
+    }));
+    assert.notEqual(finalFrame.isError, true, resultText(finalFrame));
+    assert.match(resultText(finalFrame), /没有决策选项/);
+    assert.equal(z.object({ review: z.null() }).safeParse(finalFrame.structuredContent?.result).success, true);
+  });
+
+  await t.test('review_match 与 get_script_trend', async () => {
+    const reviewResult = textResultSchema.parse(await client1.callTool({
+      name: 'review_match', arguments: { matchId, slot: 0, includeSeries: true, from: 0, to: 5 },
+    }));
+    assert.notEqual(reviewResult.isError, true, resultText(reviewResult));
+    assert.ok(reviewResult.structuredContent);
+    const review = z.object({
+      matchId: z.number(), hasTrace: z.boolean(),
+      participants: z.array(z.object({ slot: z.number(), stats: z.object({ riskyMoves: z.number() }).passthrough() }).passthrough()),
+      moments: z.array(z.object({ message: z.string() }).passthrough()), advice: z.array(z.string()),
+      series: z.array(z.object({ slot: z.number(), score: z.array(z.number()) }).passthrough()),
+      seriesRange: z.object({ from: z.number(), to: z.number() }),
+    }).passthrough().parse(reviewResult.structuredContent.result);
+    assert.equal(review.matchId, matchId);
+    assert.equal(review.hasTrace, true);
+    assert.deepEqual(review.participants.map((player) => player.slot), [0]);
+    assert.deepEqual(review.seriesRange, { from: 0, to: 5 });
+    assert.equal(review.series[0]?.score.length, 6);
+    assert.match(resultText(reviewResult), /名次/);
+    assert.match(resultText(reviewResult), /风险决策/);
+    assert.doesNotMatch(resultText(reviewResult), /```json/);
+    for (const advice of review.advice) assert.ok(resultText(reviewResult).includes(advice));
+
+    const compact = await call(client1, 'review_match', { matchId }, z.object({
+      participants: z.array(z.object({ slot: z.number() })),
+      series: z.unknown().optional(), seriesRange: z.unknown().optional(),
+    }));
+    assert.deepEqual(compact.participants.map((player) => player.slot), [0, 1]);
+    assert.equal(compact.series, undefined);
+    assert.equal(compact.seriesRange, undefined);
+
+    const trend = await call(client1, 'get_script_trend', { scriptId: script1Id, mode: 'battle', limit: 5 }, z.object({
+      scriptId: z.number(), scriptName: z.string(), mode: z.literal('battle'),
+      versions: z.array(z.object({ version: z.number(), matches: z.number() }).passthrough()),
+      recent: z.array(z.object({ matchId: z.number(), kind: z.string() }).passthrough()),
+    }).passthrough());
+    assert.equal(trend.scriptId, script1Id);
+    assert.ok(trend.recent.some((match) => match.matchId === matchId && match.kind === 'test'));
+    assert.ok(trend.versions.some((version) => version.version === 2));
+
+    const publicTrend = await call(client2, 'get_script_trend', { scriptId: script1Id }, z.object({
+      recent: z.array(z.object({ matchId: z.number(), kind: z.string() })),
+    }));
+    assert.ok(publicTrend.recent.every((match) => match.kind !== 'test'));
+    assert.ok(!publicTrend.recent.some((match) => match.matchId === matchId));
+
+    for (const args of [
+      { matchId, includeSeries: true, from: 5, to: 0 },
+      { matchId, slot: 4 }, { matchId, from: 0, to: 5001 },
+      { matchId, includeSeries: 'true' }, { matchId, owner: true },
+    ]) {
+      const failed = textResultSchema.parse(await client1.callTool({ name: 'review_match', arguments: args }));
+      assert.equal(failed.isError, true, JSON.stringify(args));
+    }
+    for (const args of [{ scriptId: script1Id, limit: 0 }, { scriptId: script1Id, limit: 201 },
+      { scriptId: script1Id, mode: 'other' }, { scriptId: script1Id, includeTests: true }]) {
+      const failed = textResultSchema.parse(await client1.callTool({ name: 'get_script_trend', arguments: args }));
+      assert.equal(failed.isError, true, JSON.stringify(args));
+    }
+
+    await call(client1, 'set_script_meta', { scriptId: script1Id, visibility: 'private' }, z.unknown());
+    const hidden = textResultSchema.parse(await client2.callTool({ name: 'get_script_trend', arguments: { scriptId: script1Id } }));
+    assert.equal(hidden.isError, true);
+    assert.equal(z.object({ error: z.object({ code: z.literal('NOT_FOUND') }) }).safeParse(hidden.structuredContent).success, true);
+    await call(client1, 'set_script_meta', { scriptId: script1Id, visibility: 'listed' }, z.unknown());
+  });
+
+  await t.test('CLI review 与 trend 使用真实 REST', async () => {
+    const cliPath = path.resolve(__dirname, '../cli/serpent.ts');
+    const env = { ...process.env, SERPENT_URL: baseUrl, SERPENT_API_KEY: apiKey1 };
+    const reviewCommand = await execFileAsync(process.execPath, ['--import', 'tsx', cliPath, 'review', String(matchId), '--slot', '0', '--json'], { env });
+    const reviewPayload: unknown = JSON.parse(reviewCommand.stdout);
+    const review = z.object({ matchId: z.number(), participants: z.array(z.object({ slot: z.number() }).passthrough()) }).parse(reviewPayload);
+    assert.equal(review.matchId, matchId);
+    assert.deepEqual(review.participants.map((player) => player.slot), [0]);
+
+    const trendCommand = await execFileAsync(process.execPath, ['--import', 'tsx', cliPath, 'trend', 'alpha-greedy', '--mode', 'battle', '--limit', '5', '--json'], { env });
+    const trendPayload: unknown = JSON.parse(trendCommand.stdout);
+    const trend = z.object({ scriptId: z.number(), recent: z.array(z.object({ matchId: z.number() }).passthrough()) }).parse(trendPayload);
+    assert.equal(trend.scriptId, script1Id);
+    assert.ok(trend.recent.some((match) => match.matchId === matchId));
+
+    const compact = await execFileAsync(process.execPath, ['--import', 'tsx', cliPath, 'trend', String(script1Id), '--mode', 'battle'], { env });
+    assert.match(compact.stdout, /胜率/);
+    const reviewCompact = await execFileAsync(process.execPath, ['--import', 'tsx', cliPath, 'review', String(matchId)], { env });
+    assert.match(reviewCompact.stdout, /风险决策/);
+    for (const output of [reviewCommand, trendCommand, compact, reviewCompact]) {
+      assert.equal(output.stderr, '');
+      assert.ok(!output.stdout.includes(apiKey1), 'CLI 不得打印 API Key');
+    }
+  });
+
+  await t.test('CLI review 与 trend 在请求前拒绝错误参数', async () => {
+    const cliPath = path.resolve(__dirname, '../cli/serpent.ts');
+    const cases: Array<{ args: string[]; message: RegExp }> = [
+      { args: ['review', '0'], message: /matchId 必须为正整数/ },
+      { args: ['review', '1', '--slot'], message: /--slot 必须为/ },
+      { args: ['review', '1', '--slot', '4'], message: /--slot 必须为/ },
+      { args: ['review', '1', '--slot', '0', '--slot', '1'], message: /--slot 不能重复指定/ },
+      { args: ['review', '1', '--json', 'false'], message: /--json 不接受参数值/ },
+      { args: ['review', '1', '--unknown'], message: /未知参数 --unknown/ },
+      { args: ['review', '1', '2'], message: /用法：review/ },
+      { args: ['trend', '1', '--mode'], message: /--mode 仅支持/ },
+      { args: ['trend', '1', '--mode', 'other'], message: /--mode 仅支持/ },
+      { args: ['trend', '1', '--limit', '201'], message: /--limit 必须为/ },
+      { args: ['trend', '1', '--limit', '1.5'], message: /--limit 必须为/ },
+      { args: ['trend', '1', '--owner'], message: /未知参数 --owner/ },
+    ];
+    for (const item of cases) {
+      await assert.rejects(execFileAsync(process.execPath, ['--import', 'tsx', cliPath, ...item.args], {
+        env: { ...process.env, SERPENT_API_KEY: '' },
+      }), (error: unknown) => {
+        const failed = z.object({ code: z.literal(1), stdout: z.string(), stderr: z.string() }).parse(error);
+        assert.equal(failed.stdout, '');
+        assert.match(failed.stderr, item.message);
+        assert.doesNotMatch(failed.stderr, /请先设置 SERPENT_API_KEY/);
+        return true;
+      });
+    }
   });
 
   await t.test('个人天梯入场、排队、排名与退出', async () => {

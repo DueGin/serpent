@@ -77,6 +77,10 @@ export function createArenaRouter(): Router {
     const p = await principal(req); schema.emptySchema.parse(req.query);
     res.status(201).json(await scriptsSvc.create(p, schema.scriptCreateSchema.parse(req.body)));
   }));
+  router.get('/scripts/:id/trend', asyncRoute(async (req, res) => {
+    const p = await principalFromRequest(req);
+    res.json(await scriptsSvc.trend(p, schema.pathId.parse(req.params.id), schema.trendQuery.parse(req.query)));
+  }));
   router.get('/scripts/:id', asyncRoute(async (req, res) => {
     const p = await principalFromRequest(req); noInput(req);
     res.json(await scriptsSvc.get(p, schema.pathId.parse(req.params.id)));
@@ -115,6 +119,11 @@ export function createArenaRouter(): Router {
   }));
   router.get('/matches/:id/replay', asyncRoute(async (req, res) => {
     noInput(req); res.json(await matchesSvc.replay(schema.pathId.parse(req.params.id)));
+  }));
+  router.get('/matches/:id/review', asyncRoute(async (req, res) => {
+    const p = await principalFromRequest(req);
+    const { series, ...query } = schema.reviewQuery.parse(req.query);
+    res.json(await matchesSvc.review(p, schema.pathId.parse(req.params.id), { ...query, includeSeries: series === '1' }));
   }));
   router.get('/matches/:id/frames/:tick', asyncRoute(async (req, res) => {
     const p = await principalFromRequest(req);

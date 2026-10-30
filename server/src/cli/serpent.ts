@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { z } from 'zod';
 
 interface CliOptions {
   positionals: string[];
@@ -22,6 +23,7 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
     const key = arg.slice(2);
+    if (flags.has(key)) throw new Error(`--${key} 不能重复指定`);
     const next = argv[index + 1];
     if (next === undefined || next.startsWith('--')) {
       flags.set(key, true);
@@ -107,6 +109,76 @@ async function requireScript(name: string): Promise<ScriptSummary> {
   return script;
 }
 
+async function scriptId(value: string): Promise<number> {
+  if (/^[1-9]\d*$/.test(value)) {
+    const result = z.number().int().positive().safe().safeParse(Number(value));
+    if (!result.success) throw new Error('脚本 ID 必须为正整数');
+    return result.data;
+  }
+  return (await requireScript(value)).id;
+}
+
+function integerFlag(flags: Map<string, string | boolean>, name: string, min: number, max: number): number | undefined {
+  if (!flags.has(name)) return undefined;
+  const raw = flags.get(name);
+  const result = z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(min).max(max)).safeParse(raw);
+  if (!result.success) throw new Error(`--${name} 必须为 ${min}–${max} 的整数`);
+  return result.data;
+}
+
+function checkOptions(options: CliOptions, allowed: string[], usage: string): void {
+  if (options.positionals.length !== 1) throw new Error(`用法：${usage}`);
+  for (const name of options.flags.keys()) {
+    if (!allowed.includes(name)) throw new Error(`未知参数 --${name}；用法：${usage}`);
+  }
+  if (options.flags.has('json') && options.flags.get('json') !== true) {
+    throw new Error('--json 不接受参数值');
+  }
+}
+
+const reviewSummarySchema = z.object({
+  matchId: z.number(), ticks: z.number(), hasTrace: z.boolean(),
+  participants: z.array(z.object({
+    name: z.string(), slot: z.number(), rank: z.number().nullable(), score: z.number(), length: z.number(),
+    deathReason: z.enum(['wall', 'self', 'snake', 'head', 'disqualified']).nullable(),
+    stats: z.object({ survivalTicks: z.number(), timeouts: z.number(), errors: z.number(), riskyMoves: z.number() }),
+  })),
+  moments: z.array(z.object({ severity: z.enum(['critical', 'warn', 'info']), message: z.string() })),
+  advice: z.array(z.string()),
+});
+
+const trendSummarySchema = z.object({
+  scriptId: z.number(), scriptName: z.string(), recent: z.array(z.unknown()),
+  versions: z.array(z.object({
+    version: z.number(), matches: z.number(), winRate: z.number(), avgRank: z.number(), avgScore: z.number(),
+    survivalRate: z.number(), timeoutRate: z.number(), errorRate: z.number(), avgMoveMs: z.number(),
+  })),
+});
+
+function printReview(payload: unknown): void {
+  const review = reviewSummarySchema.parse(payload);
+  const deathLabels = { wall: '撞墙', self: '咬到自己', snake: '撞到敌蛇', head: '头对头碰撞', disqualified: '失格' };
+  const lines = [`对局 #${review.matchId}：共 ${review.ticks} 拍，${review.hasTrace ? '含决策遥测' : '旧对局没有决策遥测'}。`];
+  for (const player of review.participants) {
+    lines.push(`${player.name}（位置 ${player.slot}）：名次 ${player.rank ?? '无'}，分数 ${player.score}，身长 ${player.length}，存活 ${player.stats.survivalTicks} 拍，死因 ${player.deathReason ? deathLabels[player.deathReason] : '无'}，超时/报错 ${player.stats.timeouts}/${player.stats.errors}，风险决策 ${player.stats.riskyMoves} 次。`);
+  }
+  const moments = review.moments.filter((moment) => moment.severity !== 'info').slice(0, 20);
+  if (moments.length) lines.push('', '关键时刻：', ...moments.map((moment) => `- ${moment.message}`));
+  if (review.advice.length) lines.push('', '改进建议：', ...review.advice.map((advice) => `- ${advice}`));
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
+function printTrend(payload: unknown): void {
+  const trend = trendSummarySchema.parse(payload);
+  const percent = (value: number): string => `${(value * 100).toFixed(1)}%`;
+  const lines = [`脚本「${trend.scriptName}」（#${trend.scriptId}）：最近 ${trend.recent.length} 局。`];
+  for (const version of trend.versions) {
+    lines.push(`v${version.version}：${version.matches} 局，胜率 ${percent(version.winRate)}，平均名次 ${version.avgRank.toFixed(2)}，平均分 ${version.avgScore.toFixed(1)}，存活率 ${percent(version.survivalRate)}，超时/报错率 ${percent(version.timeoutRate)}/${percent(version.errorRate)}，平均耗时 ${version.avgMoveMs.toFixed(2)}ms。`);
+  }
+  if (!trend.versions.length) lines.push('当前筛选范围没有已完成对局。');
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
 function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -121,6 +193,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       `  validate <file>\n` +
       `  dry-run <file> --scenario <id>\n` +
       `  test <scriptName> --mode battle --vs greedy,coward\n` +
+      `  review <matchId> [--slot N] [--json]\n` +
+      `  trend <script> [--mode battle] [--limit 50] [--json]\n` +
       `  ladder join <slug> --script <name>\n` +
       `  leaderboard <slug>\n`);
     return;
@@ -139,6 +213,37 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   }
 
   const { positionals, flags } = parseArgs(rest);
+
+  if (command === 'review') {
+    checkOptions({ positionals, flags }, ['slot', 'json'], 'review <matchId> [--slot N] [--json]');
+    const match = z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().positive().safe()).safeParse(positionals[0]);
+    if (!match.success) throw new Error('用法：review <matchId> [--slot N] [--json]；matchId 必须为正整数');
+    const slot = integerFlag(flags, 'slot', 0, 3);
+    const query = slot === undefined ? '' : `?slot=${slot}`;
+    const payload = await request(`/matches/${match.data}/review${query}`);
+    if (flags.has('json')) print(payload);
+    else printReview(payload);
+    return;
+  }
+
+  if (command === 'trend') {
+    checkOptions({ positionals, flags }, ['mode', 'limit', 'json'], 'trend <script> [--mode battle] [--limit 50] [--json]');
+    const script = positionals[0];
+    if (!script) throw new Error('用法：trend <script> [--mode battle] [--limit 50] [--json]');
+    const mode = optionalString(flags, 'mode');
+    if (flags.has('mode') && !z.enum(['solo', 'score', 'battle']).safeParse(mode).success) {
+      throw new Error('--mode 仅支持 solo、score、battle');
+    }
+    const limit = integerFlag(flags, 'limit', 1, 200);
+    const query = new URLSearchParams();
+    if (mode !== undefined) query.set('mode', mode);
+    if (limit !== undefined) query.set('limit', String(limit));
+    const id = await scriptId(script);
+    const payload = await request(`/scripts/${id}/trend${query.size ? `?${query.toString()}` : ''}`);
+    if (flags.has('json')) print(payload);
+    else printTrend(payload);
+    return;
+  }
 
   if (command === 'validate') {
     const file = positionals[0];

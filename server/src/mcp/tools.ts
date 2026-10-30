@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { MatchReviewDTO } from '../api-types';
 import { getDoc } from '../docs';
 import {
   agentsSvc,
@@ -22,6 +23,27 @@ import {
 
 const codeSchema = z.string().min(1).max(64 * 1024);
 const slugSchema = z.enum(['solo', 'battle', 'score', 'team-battle', 'team-score']);
+const deathLabels = {
+  wall: '撞墙', self: '咬到自己', snake: '撞到敌蛇', head: '头对头碰撞', disqualified: '失格',
+};
+
+function reviewSummary(review: MatchReviewDTO): string {
+  const lines = [`对局 #${review.matchId} 复盘：共 ${review.ticks} 拍，${review.hasTrace ? '含决策遥测' : '旧对局没有决策遥测'}。`];
+  for (const participant of review.participants) {
+    const stats = participant.stats;
+    lines.push(`${participant.name}（位置 ${participant.slot}）：名次 ${participant.rank ?? '无'}，分数 ${participant.score}，身长 ${participant.length}，存活 ${stats.survivalTicks} 拍，死因 ${participant.deathReason ? deathLabels[participant.deathReason] : '无'}，超时/报错 ${stats.timeouts}/${stats.errors}，风险决策 ${stats.riskyMoves} 次。`);
+    if (participant.death) {
+      const death = participant.death;
+      const killer = review.participants.find((player) => player.slot === death.killerSlot);
+      const collision = death.killerSlot === null ? '' : `，碰撞对象 ${killer?.name ?? `位置 ${death.killerSlot}`}`;
+      lines.push(`死亡归因：第 ${death.tick} 拍${deathLabels[death.reason]}，决策拍 ${death.decisionTick}，${death.hadSafeAlternative ? '存在安全替代方向' : '没有安全替代方向'}，连续低空间起点 ${death.trappedSince === null ? '无' : `第 ${death.trappedSince} 拍`}${collision}。`);
+    }
+  }
+  const moments = review.moments.filter((moment) => moment.severity !== 'info').slice(0, 20);
+  if (moments.length) lines.push('', '关键时刻：', ...moments.map((moment) => `- ${moment.message}`));
+  if (review.advice.length) lines.push('', '改进建议：', ...review.advice.map((advice) => `- ${advice}`));
+  return lines.join('\n');
+}
 
 export function registerTools(server: McpServer, p: Principal): void {
   tool(server,'whoami', {
@@ -201,7 +223,7 @@ export function registerTools(server: McpServer, p: Principal): void {
   }, async (input) => perform(async () => {
     const match = await matchesSvc.create(p, { ...input, kind: 'test', wait: true });
     return success(match, `测试赛 #${match.id} 已${match.status === 'done' ? '完成' : `进入 ${match.status} 状态`}，共 ${match.ticks} 拍。`, match.status === 'done'
-      ? `查看 participants 的 rank/score/deathReason/errors；需要复盘时调用 get_match_frame(matchId=${match.id}, tick=...)。`
+      ? `先调用 review_match(matchId=${match.id}) 查看死亡归因与改进建议，再用 get_match_frame 检查关键拍。`
       : `调用 get_match(matchId=${match.id}) 获取最终状态。`);
   }));
 
@@ -212,17 +234,47 @@ export function registerTools(server: McpServer, p: Principal): void {
   }, async ({ matchId }) => perform(async () => {
     const match = await matchesSvc.get(p, matchId);
     return success(match, `已读取对局 #${matchId}（${match.status}）。`, match.status === 'done'
-      ? '用 get_match_frame 定位死亡前一拍；修改脚本后先 validate_code 再重新测试。'
+      ? '先用 review_match 查看关键时刻和死亡归因，再用 get_match_frame 检查候选方向；修改后先 validate_code。'
       : '稍后再次 get_match；不要在未完成时重复创建相同对局。');
+  }));
+
+  tool(server,'review_match', {
+    title: '复盘整局对局',
+    description: '分析已完成对局的逐拍空间、决策遥测、关键时刻、死亡归因与改进建议。slot 可限定一名参赛者；includeSeries=true 返回逐拍序列，from/to 是闭区间且跨度最多 5000。日志和 firstError 仅所有者可见。',
+    inputSchema: z.object({
+      matchId: idSchema.safe(),
+      slot: z.number().int().min(0).max(3).optional(),
+      includeSeries: z.boolean().optional(),
+      from: z.number().int().safe().nonnegative().optional(),
+      to: z.number().int().safe().nonnegative().optional(),
+    }).strict(),
+  }, async ({ matchId, ...options }) => perform(async () => {
+    const review = await matchesSvc.review(p, matchId, options);
+    return {
+      content: [{ type: 'text', text: `${reviewSummary(review)}\n\n下一步：用 get_match_frame 检查关键拍的候选方向，再用 get_script_trend 对比版本；修改后先 validate_code。` }],
+      structuredContent: { result: review },
+    };
+  }));
+
+  tool(server,'get_script_trend', {
+    title: '查看脚本跨局趋势',
+    description: '按最近 1–200 局（默认 50）比较脚本各版本的胜率、名次、分数、生存和决策失败率。所有者包含测试赛；其他人仅能查看非私有脚本的非测试赛。',
+    inputSchema: z.object({ scriptId: idSchema.safe(), mode: modeSchema.optional(), limit: z.number().int().min(1).max(200).optional() }).strict(),
+  }, async ({ scriptId, ...options }) => perform(async () => {
+    const trend = await scriptsSvc.trend(p, scriptId, options);
+    return success(trend, `脚本「${trend.scriptName}」（#${scriptId}）的最近 ${trend.recent.length} 局，共 ${trend.versions.length} 个版本。`, '先对比各版本的胜率、死亡原因和失败率，再对典型对局调用 review_match。');
   }));
 
   tool(server,'get_match_frame', {
     title: '复盘指定拍',
-    description: '返回某拍 ASCII 棋盘和该视角的 ScriptState。复盘死亡时先看 deathTick 前一拍；viewerSlot 缺省为 0。',
+    description: '返回某拍 ASCII 棋盘、该视角的 ScriptState 和候选方向的一步反事实选项。先用 review_match 定位关键拍；viewerSlot 缺省为 0。',
     inputSchema: { matchId: idSchema, tick: z.number().int().nonnegative(), viewerSlot: z.number().int().min(0).max(3).optional() },
   }, async ({ matchId, tick, viewerSlot }) => perform(async () => {
     const frame = await matchesSvc.frame(p, matchId, tick, viewerSlot);
-    return success(frame, `对局 #${matchId} 第 ${tick} 拍：\n${frame.ascii}`, '检查 legalMoves、身体阻挡和食物位置；需要相邻局面时调整 tick 再读。');
+    const options = frame.review
+      ? `\n\n方向 | 合法 | 反事实死因 | 可达空间 | 实际选择\n--- | --- | --- | --- | ---\n${frame.review.options.map((option) => `${option.dir} | ${option.legal ? '是' : '否'} | ${option.death ? deathLabels[option.death] : '无'} | ${option.space} | ${option.chosen ? '是' : '否'}`).join('\n')}`
+      : '\n\n该视角在此拍没有决策选项（已死亡或比赛已结束）。';
+    return success(frame, `对局 #${matchId} 第 ${tick} 拍：\n${frame.ascii}${options}`, '比较实际选择和安全替代方向；用 review_match 查看整局建议，或调整 tick 检查相邻局面。');
   }));
 
   tool(server,'list_public_scripts', {

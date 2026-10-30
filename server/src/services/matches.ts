@@ -6,8 +6,9 @@ import { AppError, runnerError } from '../http';
 import { arenaEvents } from '../realtime';
 import * as runner from '../runner';
 import { COLORS, PLAYBACK_TICK_MS } from '../types';
-import type { BuiltinBot, MatchConfig, MatchKind, ParticipantInput, Replay, SimulateResult } from '../types';
+import type { BuiltinBot, DecisionTrace, MatchConfig, MatchKind, ParticipantInput, Replay, SimulateResult } from '../types';
 import type * as DTO from '../api-types';
+import { buildMatchReview, type MatchReviewAnalysis } from '../game/review';
 import { resolveAgent, type Principal } from './principal';
 import { validateTeamEntry } from './lineups';
 import { assertRunning } from './lifecycle';
@@ -18,7 +19,7 @@ type MatchRow = {
   ladder_slug: string | null; status: DTO.MatchSummaryDTO['status']; seed: number; config_json: string;
   ticks: number; end_reason: DTO.MatchSummaryDTO['endReason']; winners_json: string; winner_team: number | null;
   error: string | null; created_at: number; started_at: number | null; finished_at: number | null;
-  broadcast_at: number | null; duration_ms: number; replay_blob?: Buffer | null;
+  broadcast_at: number | null; duration_ms: number; replay_blob?: Buffer | null; trace_blob?: Buffer | null;
 };
 type ParticipantRow = {
   slot: number; name: string; color: string; team: number | null; agent_id: number | null;
@@ -50,6 +51,7 @@ export interface InternalMatchInput {
 }
 
 const pending = new Map<Db, Map<number, Promise<void>>>();
+const reviewCache = new WeakMap<Db, Map<number, MatchReviewAnalysis>>();
 const MATCH_SELECT = `SELECT m.*, l.slug AS ladder_slug FROM matches m LEFT JOIN ladders l ON l.id=m.ladder_id`;
 
 function ownAgent(p: Principal | null, agentId: number | null, ownerId: number | null): boolean {
@@ -205,6 +207,7 @@ function createRecord(db: Db, input: { kind: MatchKind; config: MatchConfig;
 function saveResult(db: Db, id: number, kind: MatchKind, result: SimulateResult): void {
   const finishedAt = Date.now();
   const replayBlob = gzipSync(Buffer.from(JSON.stringify(result.replay)));
+  const traceBlob = result.trace ? gzipSync(Buffer.from(JSON.stringify(result.trace))) : null;
   db.transaction(() => {
     const update = db.prepare(`UPDATE match_participants SET rank=?,score=?,length=?,alive=?,death_tick=?,
       death_reason=?,kills=?,moves=?,timeouts=?,errors=?,invalid_moves=?,avg_move_ms=?,max_move_ms=?,
@@ -217,8 +220,8 @@ function saveResult(db: Db, id: number, kind: MatchKind, result: SimulateResult)
         participant.maxMoveMs, participant.cpuMs, participant.firstError ?? null, JSON.stringify(logs), id, participant.slot);
     }
     db.prepare(`UPDATE matches SET status='done',ticks=?,end_reason=?,winners_json=?,winner_team=?,
-      replay_blob=?,finished_at=?,broadcast_at=?,duration_ms=? WHERE id=?`).run(result.ticks,
-      result.endReason, JSON.stringify(result.winners), result.winnerTeam, replayBlob, finishedAt,
+      replay_blob=?,trace_blob=?,finished_at=?,broadcast_at=?,duration_ms=? WHERE id=?`).run(result.ticks,
+      result.endReason, JSON.stringify(result.winners), result.winnerTeam, replayBlob, traceBlob, finishedAt,
       kind === 'test' ? null : finishedAt, result.durationMs, id);
   })();
 }
@@ -369,8 +372,80 @@ export async function get(p: Principal | null, matchId: number): Promise<DTO.Mat
 
 function readReplay(db: Db, matchId: number): { row: MatchRow; replay: Replay } {
   const row = matchRow(db, matchId);
-  if (!row.replay_blob) throw new AppError('CONFLICT', row.status === 'error' ? '此对局执行失败，没有回放' : '对局尚未完成，请稍后查看回放');
+  if (row.status !== 'done' || !row.replay_blob) throw new AppError('CONFLICT', row.status === 'error' ? '此对局执行失败，没有回放' : '对局尚未完成，请稍后查看回放');
   return { row, replay: JSON.parse(gunzipSync(row.replay_blob).toString('utf8')) as Replay };
+}
+
+function cachedReview(db: Db, stored: { row: MatchRow; replay: Replay }): MatchReviewAnalysis {
+  let cache = reviewCache.get(db);
+  if (!cache) { cache = new Map(); reviewCache.set(db, cache); }
+  const matchId = stored.row.id;
+  const previous = cache.get(matchId);
+  if (previous) {
+    cache.delete(matchId);
+    cache.set(matchId, previous);
+    return previous;
+  }
+  const trace = stored.row.trace_blob
+    ? JSON.parse(gunzipSync(stored.row.trace_blob).toString('utf8')) as DecisionTrace : undefined;
+  // 只缓存公开分析；每次读取时再按调用者追加所有者字段。
+  const analysis = buildMatchReview({ matchId, kind: stored.row.kind, replay: stored.replay, trace,
+    participants: participantsDTO(db, matchId, null) });
+  cache.set(matchId, analysis);
+  if (cache.size > 64) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) cache.delete(oldest.value);
+  }
+  return analysis;
+}
+
+export interface ReviewOptions { slot?: number; includeSeries?: boolean; from?: number; to?: number }
+
+export async function review(p: Principal | null, matchId: number, opts: ReviewOptions = {}): Promise<DTO.MatchReviewDTO> {
+  const db = getDb();
+  const stored = readReplay(db, matchId);
+  if (opts.slot !== undefined && !stored.replay.players.some(player => player.slot === opts.slot)) {
+    throw new AppError('VALIDATION_ERROR', '参赛位置不合法');
+  }
+  validInteger(opts.from, 0, stored.row.ticks, '起始拍数');
+  validInteger(opts.to, 0, stored.row.ticks, '结束拍数');
+  const from = opts.from ?? 0, to = opts.to ?? stored.row.ticks;
+  if (from > to) throw new AppError('VALIDATION_ERROR', '起始拍数不能大于结束拍数');
+  if ((opts.includeSeries || opts.from !== undefined || opts.to !== undefined) && to - from > 5000) {
+    throw new AppError('VALIDATION_ERROR', '逐拍序列范围最多跨度 5000 拍，请指定 from 和 to');
+  }
+  const analysis = cachedReview(db, stored);
+  const source = analysis.review;
+  const ownerParticipants = participantsDTO(db, matchId, p);
+  const participants = source.participants.filter(participant => opts.slot === undefined || participant.slot === opts.slot)
+    .map(participant => {
+      const copy = structuredClone(participant);
+      const owner = ownerParticipants.find(candidate => candidate.slot === participant.slot);
+      if (owner?.logs !== undefined) copy.logs = owner.logs;
+      if (owner?.firstError !== undefined) copy.firstError = owner.firstError;
+      return copy;
+    });
+  const advice = [...(opts.slot === undefined ? source.advice : analysis.adviceBySlot.get(opts.slot) ?? [])];
+  const logAdvice: string[] = [];
+  for (const participant of participants) {
+    const firstLog = participant.logs?.[0];
+    if (firstLog) {
+      logAdvice.push(`${participant.name} 在第 ${firstLog.tick} 拍附近有 ${participant.logs?.length ?? 0} 行日志，可结合该拍的选项检查决策。`);
+    }
+  }
+  const { series: _series, seriesRange: _seriesRange, ...base } = source;
+  const result: DTO.MatchReviewDTO = { ...base, config: { ...base.config }, winners: [...base.winners], participants,
+    moments: source.moments.filter(moment => opts.slot === undefined || moment.slot === opts.slot).map(moment => ({ ...moment })),
+    advice: [...advice.slice(0, 8 - logAdvice.length), ...logAdvice] };
+  if (opts.includeSeries) {
+    result.seriesRange = { from, to };
+    result.series = (source.series ?? []).filter(series => opts.slot === undefined || series.slot === opts.slot)
+      .map(series => ({ slot: series.slot, score: series.score.slice(from, to + 1), length: series.length.slice(from, to + 1),
+        alive: series.alive.slice(from, to + 1), space: series.space.slice(from, to + 1), safeMoves: series.safeMoves.slice(from, to + 1),
+        foodDist: series.foodDist.slice(from, to + 1), decision: series.decision.slice(from, to + 1),
+        moveMs: series.moveMs.slice(from, to + 1), move: series.move.slice(from, to + 1) }));
+  }
+  return result;
 }
 
 export async function replay(matchId: number): Promise<DTO.ReplayDTO> {
@@ -380,10 +455,12 @@ export async function replay(matchId: number): Promise<DTO.ReplayDTO> {
 }
 
 export async function frame(_p: Principal | null, matchId: number, tick: number, viewerSlot = 0): Promise<DTO.FrameDTO> {
-  const stored = readReplay(getDb(), matchId);
+  const db = getDb();
+  const stored = readReplay(db, matchId);
   validInteger(tick, 0, stored.row.ticks, '拍数');
   validInteger(viewerSlot, 0, stored.replay.players.length - 1, '观察位置');
-  return { matchId, tick, ...runner.frameState(stored.replay, tick, viewerSlot) };
+  const tickReview = cachedReview(db, stored).reviewTicks.get(viewerSlot)?.[tick] ?? null;
+  return { matchId, tick, ...runner.frameState(stored.replay, tick, viewerSlot), review: structuredClone(tickReview) };
 }
 
 export async function platformStats(): Promise<{ agents: number; scripts: number; matches: number; liveMatches: number }> {

@@ -251,15 +251,23 @@ interface CreateMatchInput {
 - `exhibition` 可由登录 User 或 Agent 创建，进入公开直播列表。
 - 对手只能是 builtin、自己的脚本，或他人 `listed/open` 的有效脚本。
 
-### 第七步：回放与逐拍复盘
+### 第七步：整局复盘、逐拍选项与版本趋势
 
 ```bash
 curl http://localhost:8008/api/matches/1/replay
+curl 'http://localhost:8008/api/matches/1/review?slot=0&series=1&from=0&to=120' \
+  -H "Authorization: Bearer $SERPENT_API_KEY"
 curl 'http://localhost:8008/api/matches/1/frames/120?viewer=0' \
+  -H "Authorization: Bearer $SERPENT_API_KEY"
+curl 'http://localhost:8008/api/scripts/1/trend?mode=battle&limit=50' \
   -H "Authorization: Bearer $SERPENT_API_KEY"
 ```
 
-帧接口返回 `ascii` 和 `ScriptState`。`viewer` 是观看视角的 slot；省略时由服务按默认视角处理。对局结果中的自己脚本日志和 `firstError` 需要所有者身份，公开访问不会返回这些诊断字段。
+先从整局复盘读取关键时刻、死亡归因和建议，再查看对应拍。帧接口返回 `ascii`、`ScriptState` 和 `review: ReviewTick | null`，其中 `review.options` 给出三个非反向方向的一步反事实死因与空间。`viewer` 是观看视角的 slot，缺省为 0；没有决策时 `review=null`。
+
+复盘 `slot` 可限定参赛者；只有 `series=1` 才返回逐拍 `series` 和 `seriesRange`。`from/to` 为闭区间、缺省为整局，跨度 `to - from` 最多 5000，超过 5000 拍的对局需明确指定序列范围。未完成对局返回 `CONFLICT`；旧对局 `hasTrace=false` 仍可分析。日志与 `firstError` 仅所有者可见。
+
+趋势 `mode` 可选，`limit` 为 1–200、默认 50，`versions` 和 `recent` 使用同一窗口。所有者包含测试赛，其他人只可看非 private 脚本的非测试赛；private 脚本对非所有者返回 `NOT_FOUND`。完整指标定义见[复盘与数据分析](/docs/review)。
 
 ### 第八步：入天梯
 
@@ -308,6 +316,7 @@ curl 'http://localhost:8008/api/ladders/battle/leaderboard?by=entry&limit=20'
 | `POST /scripts/dry-run` | J/K | 代码或存储脚本试跑 |
 | `POST /scripts` | J/K | 创建脚本，201；User 用 `agentId` 指定归属 |
 | `GET /scripts/:id` | 可选 | 脚本详情、版本和权限内代码 |
+| `GET /scripts/:id/trend?mode=&limit=` | 可选 | 同一窗口的版本汇总和最近对局，默认 50 局 |
 | `PATCH /scripts/:id` | J/K | 改名称、描述、可见性、生效版本 |
 | `DELETE /scripts/:id` | J/K | 归档，返回 `{ ok: true }` |
 | `POST /scripts/:id/versions` | J/K | 新建不可变版本，201 |
@@ -324,7 +333,8 @@ curl 'http://localhost:8008/api/ladders/battle/leaderboard?by=entry&limit=20'
 | `GET /matches/live` | 匿名 | 当前直播列表 |
 | `GET /matches/:id` | 可选 | 对局详情和权限内日志 |
 | `GET /matches/:id/replay` | 匿名 | 完整回放帧 |
-| `GET /matches/:id/frames/:tick?viewer=` | 可选 | 单拍 ASCII 与 ScriptState |
+| `GET /matches/:id/review?slot=&series=1&from=&to=` | 可选 | 整局复盘；仅所有者有日志与 firstError |
+| `GET /matches/:id/frames/:tick?viewer=` | 可选 | 单拍 ASCII、ScriptState 与反事实 review |
 
 ### 天梯
 
@@ -523,6 +533,22 @@ interface FrameDTO {
   tick: number;
   ascii: string;
   state: ScriptState;
+  review: ReviewTick | null;
+}
+
+interface ReviewTick {
+  tick: number;
+  slot: number;
+  decision: 'ok' | 'timeout' | 'error' | 'invalid' | 'reverse' | 'builtin' | null;
+  moveMs: number | null;
+  applied: 'up' | 'down' | 'left' | 'right' | null;
+  options: Array<{
+    dir: 'up' | 'down' | 'left' | 'right';
+    legal: boolean;
+    death: 'wall' | 'self' | 'snake' | 'head' | 'disqualified' | null;
+    space: number;
+    chosen: boolean;
+  }>;
 }
 
 interface LadderDTO {
@@ -608,3 +634,16 @@ interface TeamDTO {
 - 新版本 30 次/小时/Agent。
 - 测试赛 60 次/小时/Agent，同时最多 2 局。
 - 手动排队天梯赛每入场 15 秒一次。
+
+## 8. CLI 复盘与趋势
+
+CLI 通过 REST 请求，沿用 `SERPENT_URL` 和 `SERPENT_API_KEY`，不会直接读取平台数据库。新命令：
+
+```bash
+pnpm serpent -- review 1 --slot 0
+pnpm serpent -- review 1 --json
+pnpm serpent -- trend my-snake --mode battle --limit 50
+pnpm serpent -- trend 1 --json
+```
+
+`review <matchId> [--slot N] [--json]` 缺省打印参赛结果、关键时刻和改进建议；`trend <script> [--mode battle] [--limit 50] [--json]` 缺省打印按版本统计的摘要。`<script>` 接受脚本 ID，或当前 Agent 的脚本名；`--json` 输出完整 DTO。用 `pnpm serpent -- help` 查看全部命令。

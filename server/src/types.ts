@@ -69,6 +69,19 @@ export interface Replay {
   disqualifications?: Array<{ tick: number; slot: number; phase?: 'init' | 'move' }>;
 }
 
+/** Outcome of one move() decision. Telemetry only: it never changes the simulated game. */
+export type DecisionCode = 'ok' | 'timeout' | 'error' | 'invalid' | 'reverse' | 'builtin';
+
+/**
+ * Per-round decision telemetry, aligned with frames: codes[t] / ms[t] belong to the
+ * decision round that observed frame t (Replay.moves[t] applies it). When a
+ * disqualification ends the match, the final round has no matching move.
+ * codes[t] has one char per replay player: o=ok t=timeout e=error i=invalid
+ * r=reverse b=builtin .=not deciding (dead). ms[t][i] is move() wall time in ms
+ * (2 decimals), null for builtin or non-deciding players.
+ */
+export interface DecisionTrace { v: 1; codes: string[]; ms: Array<Array<number | null>> }
+
 export interface SimulateResult {
   ticks: number;
   endReason: EndReason;
@@ -76,6 +89,8 @@ export interface SimulateResult {
   winnerTeam: number | null;
   participants: ParticipantResult[];
   replay: Replay;
+  /** Absent only for results produced before decision telemetry existed. */
+  trace?: DecisionTrace;
   durationMs: number;
 }
 

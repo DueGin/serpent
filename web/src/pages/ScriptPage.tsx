@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { addScriptVersion, createMatch, dryRunScript, getScenarios, getScript, getScriptVersion, joinLadder, listLadders, updateScript } from '../api';
+import { ScriptTrendPanel } from '../components/ScriptTrendPanel';
 import { EmptyState, ErrorState, Loading, PageHead } from '../components/StateView';
 import { useAsync } from '../hooks';
 import type { DryRunResult } from '../types';
@@ -100,6 +101,8 @@ export function ScriptPage() {
           <section className="panel"><div className="eyebrow">LADDER ENTRY</div><h2>天梯入场</h2>{script.ladders.length > 0 && <div className="entry-chips">{script.ladders.map((entry) => <Link to={`/ladders/${entry.slug}`} key={entry.entryId}><span>{entry.slug}</span><strong>{Math.round(entry.rating)}</strong><small>{entry.rank ? `#${entry.rank}` : '未排名'}</small></Link>)}</div>}{script.canEdit && <><label>选择个人天梯<select value={ladderSlug} onChange={(event) => setLadderSlug(event.target.value)}>{(ladders || []).filter((item) => item.kind !== 'team').map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select></label><button className="btn ghost wide" disabled={!canCompete || busy === 'join'} onClick={() => action('join', async () => { await joinLadder(ladderSlug, { scriptId: id }); setNotice('已入场，后台匹配器会自动安排对局。'); reload(); })}>{busy === 'join' ? '入场中…' : '以生效版本入场'}</button></>}</section>
         </aside>
       </div>
+
+      <ScriptTrendPanel scriptId={script.id} />
     </div>
   );
 }

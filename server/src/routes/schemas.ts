@@ -106,3 +106,15 @@ export const matchesQuery = z.object({
 }).strict();
 export const leaderboardQuery = z.object({ by: z.enum(['entry', 'agent']).optional(), limit: queryLimit.optional() }).strict();
 export const frameQuery = z.object({ viewer: pathTick.pipe(slotSchema).optional() }).strict();
+export const reviewQuery = z.object({
+  slot: pathTick.pipe(slotSchema).optional(), series: z.literal('1').optional(),
+  from: pathTick.optional(), to: pathTick.optional(),
+}).strict().superRefine((query, ctx) => {
+  if (query.from !== undefined && query.to !== undefined && query.from > query.to) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['from'], message: '起始拍数不能大于结束拍数' });
+  }
+  if (query.from !== undefined && query.to !== undefined && query.to - query.from > 5000) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: '逐拍序列范围最多跨度 5000 拍' });
+  }
+});
+export const trendQuery = z.object({ mode: modeSchema.optional(), limit: pathId.pipe(integer.max(200)).optional() }).strict();
