@@ -194,7 +194,7 @@ function deriveInit(state: ScriptState): InitInfo {
   return {
     protocol: 'serpent-script-v1', mode: state.mode, teams: state.teams,
     width: state.width, height: state.height, wrap: state.wrap,
-    maxTicks: state.maxTicks, targetScore: state.targetScore,
+    maxTicks: state.maxTicks, targetScore: state.targetScore, maxHp: state.maxHp,
     you: { id: state.you.id, slot: state.you.slot, team: state.you.team },
     players: state.snakes.map(({ id, slot, name, team }) => ({ id, slot, name, team })),
     limits: { moveTimeoutMs: 50, initTimeoutMs: 500, memoryLimitMB: 32 },

@@ -1,7 +1,7 @@
 import { getDb } from '../db';
 import { AppError } from '../http';
 import type { ScriptTrendDTO, ScriptTrendMatch, ScriptTrendVersion } from '../api-types';
-import type { GameMode } from '../types';
+import { CURRENT_RULESET, type GameMode } from '../types';
 import { ownsAgent, type Principal } from './principal';
 
 interface ScriptRow { id: number; agent_id: number; name: string; visibility: string; archived: number; disabled: number }
@@ -63,5 +63,6 @@ export async function trend(p: Principal | null, scriptId: number, opts: { mode?
       avgMoveMs: decisions ? sum(row => row.avgMoveMs * row.moves) / decisions : 0,
       maxMoveMs: Math.max(...matches.map(row => row.maxMoveMs)) };
   });
-  return { scriptId, scriptName: script.name, mode: opts.mode ?? null, versions, recent };
+  // 脚手架：按规则集过滤由规则实现补上，目前只声明当前规则集。
+  return { scriptId, scriptName: script.name, mode: opts.mode ?? null, ruleset: CURRENT_RULESET, versions, recent };
 }

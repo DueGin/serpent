@@ -35,7 +35,7 @@ const SYMBOLS: Readonly<Record<string, Direction>> = { U: 'up', D: 'down', L: 'l
 const CODES: Readonly<Record<string, DecisionCode>> = {
   o: 'ok', t: 'timeout', e: 'error', i: 'invalid', r: 'reverse', b: 'builtin',
 };
-const REASONS = { wall: '撞墙', self: '撞到自己', snake: '撞上对手身体', head: '头部对撞', disqualified: '失格' };
+const REASONS = { wall: '撞墙', self: '撞到自己', snake: '撞上对手身体', head: '头部对撞', starve: '生命值耗尽', disqualified: '失格' };
 const FAILURE_LABELS = { timeout: '超时', error: '报错', invalid: '非法返回', reverse: '掉头' };
 type FailureKind = keyof typeof FAILURE_LABELS;
 
@@ -167,14 +167,14 @@ export function reviewOptions(game: GameState, replay: Replay, slot: number): Re
 }
 
 function emptySeries(slot: number): ReviewSeries {
-  return { slot, score: [], length: [], alive: [], space: [], safeMoves: [], foodDist: [],
+  return { slot, score: [], length: [], alive: [], hp: [], space: [], safeMoves: [], foodDist: [],
     decision: [], moveMs: [], move: [] };
 }
 
 function emptyStats(): ReviewParticipantStats {
   return { survivalTicks: 0, decisions: 0, ok: 0, timeouts: 0, errors: 0, invalid: 0, reverses: 0,
     avgMoveMs: null, p95MoveMs: null, maxMoveMs: null, foods: 0, ticksPerFood: null,
-    avgSpace: 0, minSpace: 0, lowSpaceTicks: 0, riskyMoves: 0, avgFoodDist: null };
+    avgSpace: 0, minSpace: 0, lowSpaceTicks: 0, riskyMoves: 0, avgFoodDist: null, minHp: null, lowHpTicks: 0 };
 }
 
 function isRisky(options: ReviewOption[], length: number): boolean {
@@ -248,7 +248,7 @@ export function buildMatchReview(input: MatchReviewInput): MatchReviewAnalysis {
       const decision = decisionAt(trace, game.tick, index);
       const moveMs = decision === null ? null : elapsedAt(trace, game.tick, index);
       const applied = directionAt(replay, game.tick, index);
-      line.score.push(snake.score); line.length.push(snake.body.length); line.alive.push(snake.alive ? 1 : 0);
+      line.score.push(snake.score); line.length.push(snake.body.length); line.alive.push(snake.alive ? 1 : 0); line.hp.push(snake.hp);
       line.space.push(metrics.space); line.safeMoves.push(metrics.safeMoves); line.foodDist.push(metrics.foodDist);
       line.decision.push(decision); line.moveMs.push(moveMs); line.move.push(applied);
       const options = snake.alive && applied !== null ? optionsFor(game, replay, index, workspace) : [];

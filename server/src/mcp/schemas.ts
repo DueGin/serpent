@@ -22,6 +22,7 @@ export const snakeViewSchema = z.object({
   length: z.number().int().nonnegative(),
   score: z.number(),
   alive: z.boolean(),
+  hp: z.number().int().nonnegative().nullable().default(null),
 });
 
 export const stateSchema = z.object({
@@ -35,6 +36,7 @@ export const stateSchema = z.object({
   height: z.number().int().positive(),
   wrap: z.boolean(),
   targetScore: z.number().nullable(),
+  maxHp: z.number().int().positive().nullable().default(null),
   you: snakeViewSchema,
   snakes: z.array(snakeViewSchema),
   foods: z.array(pointSchema),
@@ -50,6 +52,7 @@ export const initSchema = z.object({
   wrap: z.boolean(),
   maxTicks: z.number().int().positive(),
   targetScore: z.number().nullable(),
+  maxHp: z.number().int().positive().nullable().default(null),
   you: z.object({ id: z.string(), slot: z.number().int(), team: z.number().int().nullable() }),
   players: z.array(z.object({
     id: z.string(),

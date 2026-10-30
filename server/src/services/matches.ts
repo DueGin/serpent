@@ -12,6 +12,7 @@ import { buildMatchReview, type MatchReviewAnalysis } from '../game/review';
 import { resolveAgent, type Principal } from './principal';
 import { validateTeamEntry } from './lineups';
 import { assertRunning } from './lifecycle';
+import { normalizeConfig, type StoredMatchConfig } from '../runner/config';
 
 type Db = Database.Database;
 type MatchRow = {
@@ -102,7 +103,7 @@ function summary(db: Db, row: MatchRow, p: Principal | null): DTO.MatchSummaryDT
 
 function detail(db: Db, matchId: number, p: Principal | null): DTO.MatchDetailDTO {
   const row = matchRow(db, matchId);
-  return { ...summary(db, row, p), config: JSON.parse(row.config_json),
+  return { ...summary(db, row, p), config: normalizeConfig(JSON.parse(row.config_json) as StoredMatchConfig),
     ...(row.error ? { error: row.error } : {}),
     ...(row.finished_at !== null ? { durationMs: row.duration_ms } : {}) };
 }
@@ -373,7 +374,8 @@ export async function get(p: Principal | null, matchId: number): Promise<DTO.Mat
 function readReplay(db: Db, matchId: number): { row: MatchRow; replay: Replay } {
   const row = matchRow(db, matchId);
   if (row.status !== 'done' || !row.replay_blob) throw new AppError('CONFLICT', row.status === 'error' ? '此对局执行失败，没有回放' : '对局尚未完成，请稍后查看回放');
-  return { row, replay: JSON.parse(gunzipSync(row.replay_blob).toString('utf8')) as Replay };
+  const replay = JSON.parse(gunzipSync(row.replay_blob).toString('utf8')) as Omit<Replay, 'config'> & { config: StoredMatchConfig };
+  return { row, replay: { ...replay, config: normalizeConfig(replay.config) } };
 }
 
 function cachedReview(db: Db, stored: { row: MatchRow; replay: Replay }): MatchReviewAnalysis {
@@ -441,7 +443,7 @@ export async function review(p: Principal | null, matchId: number, opts: ReviewO
     result.seriesRange = { from, to };
     result.series = (source.series ?? []).filter(series => opts.slot === undefined || series.slot === opts.slot)
       .map(series => ({ slot: series.slot, score: series.score.slice(from, to + 1), length: series.length.slice(from, to + 1),
-        alive: series.alive.slice(from, to + 1), space: series.space.slice(from, to + 1), safeMoves: series.safeMoves.slice(from, to + 1),
+        alive: series.alive.slice(from, to + 1), hp: series.hp.slice(from, to + 1), space: series.space.slice(from, to + 1), safeMoves: series.safeMoves.slice(from, to + 1),
         foodDist: series.foodDist.slice(from, to + 1), decision: series.decision.slice(from, to + 1),
         moveMs: series.moveMs.slice(from, to + 1), move: series.move.slice(from, to + 1) }));
   }

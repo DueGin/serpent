@@ -23,6 +23,8 @@ export interface Snake {
   pendingDir: Direction | null;
   alive: boolean;
   score: number;
+  /** 当前生命值；classic 规则（maxHp 为 null）时为 null。 */
+  hp: number | null;
   kills: number;
   deathTick: number | null;
   deathReason: DeathReason | null;
@@ -119,6 +121,7 @@ export function createGame({ config, participants, foods }: CreateGameInput): Ga
       pendingDir: null,
       alive: true,
       score: 0,
+      hp: config.maxHp ?? null,
       kills: 0,
       deathTick: null,
       deathReason: null,
@@ -197,7 +200,7 @@ function kill(state: GameState, snake: Snake, reason: DeathReason): void {
   snake.deathTick = state.tick;
   snake.deathReason = reason;
   const labels: Record<DeathReason, string> = {
-    wall: '撞墙', self: '撞到自己', snake: '撞上对手', head: '对撞', disqualified: '失格',
+    wall: '撞墙', self: '撞到自己', snake: '撞上对手', head: '对撞', starve: '生命值耗尽', disqualified: '失格',
   };
   state.events.push({ tick: state.tick, type: 'die', slot: snake.slot, message: `${snake.name} ${labels[reason]}` });
 }

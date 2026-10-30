@@ -140,7 +140,7 @@ const reviewSummarySchema = z.object({
   matchId: z.number(), ticks: z.number(), hasTrace: z.boolean(),
   participants: z.array(z.object({
     name: z.string(), slot: z.number(), rank: z.number().nullable(), score: z.number(), length: z.number(),
-    deathReason: z.enum(['wall', 'self', 'snake', 'head', 'disqualified']).nullable(),
+    deathReason: z.enum(['wall', 'self', 'snake', 'head', 'starve', 'disqualified']).nullable(),
     stats: z.object({ survivalTicks: z.number(), timeouts: z.number(), errors: z.number(), riskyMoves: z.number() }),
   })),
   moments: z.array(z.object({ severity: z.enum(['critical', 'warn', 'info']), message: z.string() })),
@@ -157,7 +157,7 @@ const trendSummarySchema = z.object({
 
 function printReview(payload: unknown): void {
   const review = reviewSummarySchema.parse(payload);
-  const deathLabels = { wall: '撞墙', self: '咬到自己', snake: '撞到敌蛇', head: '头对头碰撞', disqualified: '失格' };
+  const deathLabels = { wall: '撞墙', self: '咬到自己', snake: '撞到敌蛇', head: '头对头碰撞', starve: '生命值耗尽', disqualified: '失格' };
   const lines = [`对局 #${review.matchId}：共 ${review.ticks} 拍，${review.hasTrace ? '含决策遥测' : '旧对局没有决策遥测'}。`];
   for (const player of review.participants) {
     lines.push(`${player.name}（位置 ${player.slot}）：名次 ${player.rank ?? '无'}，分数 ${player.score}，身长 ${player.length}，存活 ${player.stats.survivalTicks} 拍，死因 ${player.deathReason ? deathLabels[player.deathReason] : '无'}，超时/报错 ${player.stats.timeouts}/${player.stats.errors}，风险决策 ${player.stats.riskyMoves} 次。`);

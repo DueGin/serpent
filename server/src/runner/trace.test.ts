@@ -3,6 +3,21 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import type { ParticipantInput, SimulateResult } from '../types';
 import { defaultConfig } from './config';
+import type { GameMode, MatchConfig, Replay } from '../types';
+
+/** 冻结的旧版（classic）默认配置：基线哈希证明旧规则对局逐字节不变，不随新默认配置变化。 */
+function classicConfig(mode: GameMode, seed: number, maxTicks: number, players: number): MatchConfig {
+  return { mode, teams: false, width: mode === 'solo' ? 24 : 28, height: mode === 'solo' ? 16 : 20,
+    wrap: mode === 'score', foodCount: mode === 'solo' ? 1 : Math.max(3, Math.min(4, players)), maxTicks,
+    targetScore: null, seed, moveTimeoutMs: 50, initTimeoutMs: 500, memoryLimitMB: 32, matchCpuBudgetMs: 30_000,
+    ruleset: 'classic', maxHp: null };
+}
+
+/** 旧回放的 config 没有 ruleset/maxHp；去掉这两个字段后与旧 runner 的输出逐字节比较。 */
+function legacyReplayHash(replay: Replay): string {
+  const { ruleset: _ruleset, maxHp: _maxHp, ...config } = replay.config;
+  return createHash('sha256').update(JSON.stringify({ ...replay, config })).digest('hex');
+}
 import { runSimulation } from './jobs';
 import { replayFrames } from './replay';
 
@@ -109,7 +124,7 @@ test('撞墙死亡后不再记录脚本耗时，死亡轮与下一轮按 tick �
 });
 
 test('失格结束轮仍记录遥测，codes 比 moves 多一条且旧回放逐字节一致', async () => {
-  const config = defaultConfig('score', { seed: 2, maxTicks: 100, players: 2 });
+  const config = classicConfig('score', 2, 100, 2);
   config.initTimeoutMs = 1000;
   config.moveTimeoutMs = 1000;
   const result = await runSimulation({ config,
@@ -123,12 +138,12 @@ test('失格结束轮仍记录遥测，codes 比 moves 多一条且旧回放逐�
     [{ tick: 49, slot: 0, phase: 'move' }, { tick: 49, slot: 1, phase: 'move' }]);
   assert.equal(replayFrames(result.replay).length, result.ticks + 1);
   // 实际运行加入遥测前的 jobs.ts 得到此摘要，包含第 49 拍失格记录。
-  assert.equal(createHash('sha256').update(JSON.stringify(result.replay)).digest('hex'),
+  assert.equal(legacyReplayHash(result.replay),
     '99e16c64adf04a3155ea5f82c9187d13804fce52955eccc31baaa3ec6c81739b');
 });
 
 test('脚本 RNG 与食物 RNG 的旧回放字节不受遥测影响', async () => {
-  const config = defaultConfig('battle', { seed: 55, maxTicks: 60, players: 2 });
+  const config = classicConfig('battle', 55, 60, 2);
   config.initTimeoutMs = 1000;
   config.moveTimeoutMs = 1000;
   const input = { config, participants: [
@@ -137,7 +152,7 @@ test('脚本 RNG 与食物 RNG 的旧回放字节不受遥测影响', async () =
   ] };
   const result = await runSimulation(input);
   // 此摘要来自无 trace 的旧 runner；对手吃到食物，覆盖引擎 RNG 的继续推进。
-  assert.equal(createHash('sha256').update(JSON.stringify(result.replay)).digest('hex'),
+  assert.equal(legacyReplayHash(result.replay),
     '33deab2ee828b1b027e8522b1abeab77051935955923a264144d6792f2409d18');
   const repeat = await runSimulation(input);
   assert.deepEqual(Buffer.from(JSON.stringify(repeat.replay)), Buffer.from(JSON.stringify(result.replay)));

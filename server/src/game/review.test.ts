@@ -241,7 +241,7 @@ test('incremental replay callbacks preserve all existing frame and viewer semant
   for (const frame of frames) {
     const state = frameState(replay, frame.tick, 0).state;
     assert.deepEqual(state.foods, frame.foods);
-    assert.deepEqual(state.snakes.map(({ slot, body, dir, alive, score, length }) => ({ slot, body, dir, alive, score, length })), frame.snakes);
+    assert.deepEqual(state.snakes.map(({ slot, body, dir, alive, score, length, hp }) => ({ slot, body, dir, alive, score, length, hp })), frame.snakes);
   }
   assert.equal(frames[1]?.snakes[0]?.alive, false);
   assert.equal(frames[1]?.events.filter((event) => event.type === 'die').length, 1);

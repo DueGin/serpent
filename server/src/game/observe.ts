@@ -27,7 +27,7 @@ export function buildInitInfo(state: GameState, id: string | number): InitInfo {
   return {
     protocol: 'serpent-script-v1', mode: state.mode, teams: state.teams,
     width: state.width, height: state.height, wrap: state.wrap,
-    maxTicks: state.maxTicks, targetScore: state.targetScore,
+    maxTicks: state.maxTicks, targetScore: state.targetScore, maxHp: state.config.maxHp ?? null,
     you: { id: you.id, slot: you.slot, team: you.team },
     players: state.snakes.map((snake) => ({ id: snake.id, slot: snake.slot, name: snake.name, team: snake.team })),
     limits: {
@@ -44,13 +44,13 @@ export function buildScriptState(state: GameState, id: string | number): ScriptS
     id: snake.id, slot: snake.slot, name: snake.name, team: snake.team,
     head: snake.body[0] ? { ...snake.body[0] } : null,
     body: snake.body.map((point) => ({ ...point })), dir: snake.dir,
-    length: snake.body.length, score: snake.score, alive: snake.alive,
+    length: snake.body.length, score: snake.score, alive: snake.alive, hp: snake.hp,
   }));
   return {
     protocol: 'serpent-script-v1', tick: state.tick, maxTicks: state.maxTicks,
     remainingTicks: Math.max(0, state.maxTicks - state.tick), mode: state.mode,
     teams: state.teams, width: state.width, height: state.height,
-    wrap: state.wrap, targetScore: state.targetScore,
+    wrap: state.wrap, targetScore: state.targetScore, maxHp: state.config.maxHp ?? null,
     you: snakes.find((snake) => snake.slot === you.slot)!, snakes,
     foods: state.foods.map((food) => ({ ...food })), legalMoves: legalMoves(state, id),
   };

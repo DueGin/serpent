@@ -44,7 +44,7 @@ function assertReplay(result: SimulateResult): void {
   for (const frame of frames) {
     const observed = frameState(result.replay, frame.tick, result.participants[0]!.slot).state;
     assert.deepEqual(observed.foods, frame.foods);
-    assert.deepEqual(observed.snakes.map(({ slot, body, dir, alive, score, length }) => ({ slot, body, dir, alive, score, length })), frame.snakes);
+    assert.deepEqual(observed.snakes.map(({ slot, body, dir, alive, score, length, hp }) => ({ slot, body, dir, alive, score, length, hp })), frame.snakes);
   }
 }
 

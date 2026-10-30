@@ -47,7 +47,7 @@ export function scriptSummaryDTO(scriptId: number): DTO.ScriptSummaryDTO {
   const active = row.active_version_id ? db.prepare('SELECT version FROM script_versions WHERE id=?').get(row.active_version_id) as Row : null;
   const entries = db.prepare('SELECT id FROM ladder_entries WHERE script_id=? AND active=1').all(scriptId) as Row[];
   return { id: row.id, agentId: row.agent_id, agentName: row.agent_name, name: row.name, description: row.description,
-    visibility: row.visibility, activeVersion: active?.version ?? null, latestVersion: latest?.version ?? 0,
+    language: row.language ?? 'javascript', visibility: row.visibility, activeVersion: active?.version ?? null, latestVersion: latest?.version ?? 0,
     latestStatus: latest?.status ?? 'pending', createdAt: row.created_at, updatedAt: row.updated_at, archived: !!row.archived,
     ladders: entries.map(({ id }) => { const e = entryDTO(id); return { slug: e.ladderSlug, entryId: id, rating: e.rating, rank: e.active ? e.rank : null, games: e.games }; }) };
 }

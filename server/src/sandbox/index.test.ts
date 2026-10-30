@@ -13,7 +13,7 @@ const options: SandboxOptions = {
 
 const info = {
   protocol: 'serpent-script-v1', mode: 'solo', teams: false, width: 24, height: 16,
-  wrap: false, maxTicks: 100, targetScore: null,
+  wrap: false, maxTicks: 100, targetScore: null, maxHp: null,
   you: { id: 's0', slot: 0, team: null },
   players: [{ id: 's0', slot: 0, name: 'Test', team: null }],
   limits: { moveTimeoutMs: options.moveTimeoutMs, initTimeoutMs: options.initTimeoutMs, memoryLimitMB: 16 },
@@ -23,7 +23,7 @@ function state(tick = 0): ScriptState {
   return {
     ...info, tick, remainingTicks: 100 - tick,
     you: { id: 's0', slot: 0, name: 'Test', team: null, head: { x: 3, y: 3 },
-      body: [{ x: 3, y: 3 }], dir: 'right', length: 1, score: 0, alive: true },
+      body: [{ x: 3, y: 3 }], dir: 'right', length: 1, score: 0, alive: true, hp: null },
     snakes: [], foods: [], legalMoves: ['up', 'down', 'right'],
   };
 }

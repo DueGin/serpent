@@ -5,7 +5,12 @@ export type MatchKind = 'test' | 'exhibition' | 'ladder' | 'benchmark';
 export type MatchStatus = 'queued' | 'running' | 'done' | 'error';
 export type ScriptVisibility = 'private' | 'listed' | 'open';
 export type VersionStatus = 'pending' | 'valid' | 'invalid';
-export type DeathReason = 'wall' | 'self' | 'snake' | 'head' | 'disqualified';
+export type DeathReason = 'wall' | 'self' | 'snake' | 'head' | 'starve' | 'disqualified';
+export type ScriptLanguage = 'javascript' | 'python';
+/** classic: 旧规则（历史对局回放用）；survival-64: 64×64、有边界、生命值。 */
+export type Ruleset = 'classic' | 'survival-64';
+export const CURRENT_RULESET: Ruleset = 'survival-64';
+export const DEFAULT_MAX_HP = 100;
 export type EndReason = 'last_alive' | 'all_dead' | 'max_ticks' | 'target_score';
 
 export interface Point { x: number; y: number }
@@ -24,13 +29,17 @@ export interface MatchConfig {
   initTimeoutMs: number;
   memoryLimitMB: number;
   matchCpuBudgetMs: number;
+  /** 旧对局的存储配置没有这两个字段，读取时由 normalizeConfig 补为 classic / null。 */
+  ruleset: Ruleset;
+  /** null 表示不启用生命值（classic）。 */
+  maxHp: number | null;
 }
 
 export interface ParticipantInput {
   slot: number;
   name: string;
   team: number | null;
-  source: { kind: 'script'; code: string } | { kind: 'builtin'; bot: BuiltinBot };
+  source: { kind: 'script'; code: string; language?: ScriptLanguage } | { kind: 'builtin'; bot: BuiltinBot };
 }
 
 export interface SimulateInput {
@@ -101,6 +110,7 @@ export interface FrameSnake {
   alive: boolean;
   score: number;
   length: number;
+  hp: number | null;
 }
 export interface FrameEvent { type: 'eat' | 'die' | 'win'; slot?: number; message: string }
 // Tick N includes that tick's disqualifications, before the next engine step.
@@ -133,6 +143,8 @@ export interface SnakeView {
   length: number;
   score: number;
   alive: boolean;
+  /** 当前生命值；classic 规则为 null。 */
+  hp: number | null;
 }
 
 export interface InitInfo {
@@ -144,6 +156,7 @@ export interface InitInfo {
   wrap: boolean;
   maxTicks: number;
   targetScore: number | null;
+  maxHp: number | null;
   you: { id: string; slot: number; team: number | null };
   players: Array<{ id: string; slot: number; name: string; team: number | null }>;
   limits: { moveTimeoutMs: number; initTimeoutMs: number; memoryLimitMB: number };
@@ -160,6 +173,7 @@ export interface ScriptState {
   height: number;
   wrap: boolean;
   targetScore: number | null;
+  maxHp: number | null;
   you: SnakeView;
   snakes: SnakeView[];
   foods: Point[];
@@ -173,7 +187,7 @@ export interface ScenarioInfo {
   init: InitInfo;
   state: ScriptState;
 }
-export interface DryRunInput { code: string; scenario?: string; state?: ScriptState; init?: InitInfo }
+export interface DryRunInput { code: string; language?: ScriptLanguage; scenario?: string; state?: ScriptState; init?: InitInfo }
 export interface DryRunResult {
   ok: boolean;
   direction: Direction | null;

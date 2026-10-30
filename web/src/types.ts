@@ -5,7 +5,11 @@ export type MatchKind = 'test' | 'exhibition' | 'ladder' | 'benchmark';
 export type MatchStatus = 'queued' | 'running' | 'done' | 'error';
 export type ScriptVisibility = 'private' | 'listed' | 'open';
 export type VersionStatus = 'pending' | 'valid' | 'invalid';
-export type DeathReason = 'wall' | 'self' | 'snake' | 'head' | 'disqualified';
+export type DeathReason = 'wall' | 'self' | 'snake' | 'head' | 'starve' | 'disqualified';
+export type ScriptLanguage = 'javascript' | 'python';
+export type Ruleset = 'classic' | 'survival-64';
+export const CURRENT_RULESET: Ruleset = 'survival-64';
+export const DEFAULT_MAX_HP = 100;
 export type EndReason = 'last_alive' | 'all_dead' | 'max_ticks' | 'target_score';
 export interface Point { x: number; y: number }
 
@@ -23,6 +27,8 @@ export interface MatchConfig {
   initTimeoutMs: number;
   memoryLimitMB: number;
   matchCpuBudgetMs: number;
+  ruleset: Ruleset;
+  maxHp: number | null;
 }
 
 export interface InitInfo {
@@ -34,6 +40,7 @@ export interface InitInfo {
   wrap: boolean;
   maxTicks: number;
   targetScore: number | null;
+  maxHp: number | null;
   you: { id: string; slot: number; team: number | null };
   players: Array<{ id: string; slot: number; name: string; team: number | null }>;
   limits: { moveTimeoutMs: number; initTimeoutMs: number; memoryLimitMB: number };
@@ -50,6 +57,7 @@ export interface SnakeView {
   length: number;
   score: number;
   alive: boolean;
+  hp: number | null;
 }
 
 export interface ScriptState {
@@ -63,6 +71,7 @@ export interface ScriptState {
   height: number;
   wrap: boolean;
   targetScore: number | null;
+  maxHp: number | null;
   you: SnakeView;
   snakes: SnakeView[];
   foods: Point[];
@@ -73,7 +82,7 @@ export interface ParticipantInput {
   slot: number;
   name: string;
   team: number | null;
-  source: { kind: 'script'; code: string } | { kind: 'builtin'; bot: BuiltinBot };
+  source: { kind: 'script'; code: string; language?: ScriptLanguage } | { kind: 'builtin'; bot: BuiltinBot };
 }
 
 export interface SimulateInput {
@@ -125,7 +134,7 @@ export interface SimulateResult {
   durationMs: number;
 }
 
-export interface FrameSnake { slot: number; body: Point[]; dir: Direction; alive: boolean; score: number; length: number }
+export interface FrameSnake { slot: number; body: Point[]; dir: Direction; alive: boolean; score: number; length: number; hp: number | null }
 export interface FrameEvent { type: 'eat' | 'die' | 'win'; slot?: number; message: string }
 export interface Frame { tick: number; snakes: FrameSnake[]; foods: Point[]; events: FrameEvent[] }
 
@@ -146,7 +155,7 @@ export interface CheckReport {
 }
 
 export interface ScenarioInfo { id: string; title: string; description: string; init: InitInfo; state: ScriptState }
-export interface DryRunInput { code: string; scenario?: string; state?: ScriptState; init?: InitInfo }
+export interface DryRunInput { code: string; language?: ScriptLanguage; scenario?: string; state?: ScriptState; init?: InitInfo }
 export interface DryRunResult {
   ok: boolean;
   direction: Direction | null;
@@ -195,6 +204,7 @@ export interface ScriptSummaryDTO {
   agentName: string;
   name: string;
   description: string;
+  language: ScriptLanguage;
   visibility: ScriptVisibility;
   activeVersion: number | null;
   latestVersion: number;
@@ -292,6 +302,7 @@ export interface ReviewSeries {
   score: number[];
   length: number[];
   alive: Array<0 | 1>;
+  hp: Array<number | null>;
   space: number[];
   safeMoves: number[];
   foodDist: Array<number | null>;
@@ -330,6 +341,8 @@ export interface ReviewParticipantStats {
   lowSpaceTicks: number;
   riskyMoves: number;
   avgFoodDist: number | null;
+  minHp: number | null;
+  lowHpTicks: number;
 }
 export interface ReviewParticipant {
   slot: number;
@@ -407,7 +420,7 @@ export interface ScriptTrendMatch {
   invalidMoves: number;
   createdAt: number;
 }
-export interface ScriptTrendDTO { scriptId: number; scriptName: string; mode: GameMode | null; versions: ScriptTrendVersion[]; recent: ScriptTrendMatch[] }
+export interface ScriptTrendDTO { scriptId: number; scriptName: string; mode: GameMode | null; ruleset: Ruleset; versions: ScriptTrendVersion[]; recent: ScriptTrendMatch[] }
 
 export interface LadderDTO {
   id: number;

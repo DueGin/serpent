@@ -59,7 +59,7 @@ describe('database migrations', () => {
         INSERT INTO agents VALUES (9,42,'old-agent','https://example.test','enc1:legacy-secret','old prompt');`);
       legacy.close();
       const migrated = openDatabase(file);
-      assert.equal(migrated.pragma('user_version', { simple: true }), 3);
+      assert.equal(migrated.pragma('user_version', { simple: true }), 4);
       const matchColumns = migrated.pragma('table_info(matches)') as Array<{ name: string; type: string }>;
       assert.ok(matchColumns.some(column => column.name === 'trace_blob' && column.type === 'BLOB'));
       assert.equal((migrated.prepare('SELECT username FROM users WHERE id=42').get() as { username: string }).username, 'legacy');
@@ -100,7 +100,7 @@ describe('database migrations', () => {
       const migrated = openDatabase(file);
       const entry = migrated.prepare("SELECT active,inactive_reason,authorized_user_id FROM ladder_entries WHERE entrant_type='team'").get() as
         { active: number; inactive_reason: string; authorized_user_id: number | null };
-      assert.equal(migrated.pragma('user_version', { simple: true }), 3);
+      assert.equal(migrated.pragma('user_version', { simple: true }), 4);
       assert.equal(entry.active, 0);
       assert.match(entry.inactive_reason, /重新确认/);
       assert.equal(entry.authorized_user_id, null);
@@ -119,7 +119,7 @@ describe('database migrations', () => {
         VALUES('test','solo','done',1,'{}',?,0)`).run(replay);
       old.close();
       const migrated = openDatabase(file);
-      assert.equal(migrated.pragma('user_version', { simple: true }), 3);
+      assert.equal(migrated.pragma('user_version', { simple: true }), 4);
       const row = migrated.prepare('SELECT replay_blob,trace_blob FROM matches').get() as { replay_blob: Buffer; trace_blob: Buffer | null };
       assert.deepEqual(row.replay_blob, replay);
       assert.equal(row.trace_blob, null);

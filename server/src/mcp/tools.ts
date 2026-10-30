@@ -24,7 +24,7 @@ import {
 const codeSchema = z.string().min(1).max(64 * 1024);
 const slugSchema = z.enum(['solo', 'battle', 'score', 'team-battle', 'team-score']);
 const deathLabels = {
-  wall: '撞墙', self: '咬到自己', snake: '撞到敌蛇', head: '头对头碰撞', disqualified: '失格',
+  wall: '撞墙', self: '咬到自己', snake: '撞到敌蛇', head: '头对头碰撞', starve: '生命值耗尽', disqualified: '失格',
 };
 
 function reviewSummary(review: MatchReviewDTO): string {

@@ -12,11 +12,13 @@ const pointSchema = z.object({ x: integer.min(0).max(511), y: integer.min(0).max
 const dimensions = { width: integer.min(1).max(512), height: integer.min(1).max(512) };
 const targetScoreSchema = integer.min(1).nullable();
 const maxTicksSchema = integer.min(1).max(10000);
+const maxHpSchema = integer.min(1).max(10000).nullable();
 const identitySchema = z.object({ id: z.string().min(1).max(80), slot: slotSchema, team: teamSchema.nullable() }).strict();
 const playerSchema = identitySchema.extend({ name: nameSchema });
 const snakeSchema = playerSchema.extend({
   head: pointSchema.nullable(), body: z.array(pointSchema).max(65536),
   dir: directionSchema, length: integer.min(0).max(65536), score: integer.min(0), alive: z.boolean(),
+  hp: integer.min(0).max(10000).nullable(),
 }).superRefine((snake, ctx) => {
   const first = snake.body[0] ?? null;
   if (snake.length !== snake.body.length || (snake.alive && first === null) ||
@@ -41,7 +43,7 @@ function checkTeams(
 
 export const initSchema: z.ZodType<InitInfo> = z.object({
   protocol: z.literal('serpent-script-v1'), mode: modeSchema, teams: z.boolean(), ...dimensions,
-  wrap: z.boolean(), maxTicks: maxTicksSchema, targetScore: targetScoreSchema,
+  wrap: z.boolean(), maxTicks: maxTicksSchema, targetScore: targetScoreSchema, maxHp: maxHpSchema,
   you: identitySchema, players: z.array(playerSchema).min(1).max(4),
   limits: z.object({
     moveTimeoutMs: integer.min(1).max(50), initTimeoutMs: integer.min(1).max(500),
@@ -62,7 +64,7 @@ export const stateSchema: z.ZodType<ScriptState> = z.object({
   protocol: z.literal('serpent-script-v1'), tick: integer.min(0).max(10000),
   maxTicks: maxTicksSchema, remainingTicks: integer.min(0).max(10000),
   mode: modeSchema, teams: z.boolean(), ...dimensions, wrap: z.boolean(), targetScore: targetScoreSchema,
-  you: snakeSchema, snakes: z.array(snakeSchema).min(1).max(4), foods: z.array(pointSchema).max(64),
+  maxHp: maxHpSchema, you: snakeSchema, snakes: z.array(snakeSchema).min(1).max(4), foods: z.array(pointSchema).max(64),
   legalMoves: z.array(directionSchema).max(4),
 }).strict().superRefine((state, ctx) => {
   checkTeams(state.mode, state.teams, state.snakes, ctx);

@@ -60,7 +60,7 @@ function frame(game: GameState): Frame {
   return {
     tick: game.tick,
     snakes: game.snakes.map((snake) => ({ slot: snake.slot, body: snake.body.map((point) => ({ ...point })),
-      dir: snake.dir, alive: snake.alive, score: snake.score, length: snake.body.length })),
+      dir: snake.dir, alive: snake.alive, score: snake.score, length: snake.body.length, hp: snake.hp })),
     foods: game.foods.map((food) => ({ ...food })),
     events: game.events.map(({ type, slot, message }) => ({ type, ...(slot === undefined ? {} : { slot }), message })),
   };

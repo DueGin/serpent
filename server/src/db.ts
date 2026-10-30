@@ -38,7 +38,7 @@ export interface TeamRow {
 }
 
 let db: Database.Database | null = null;
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export function getDb(): Database.Database {
   if (!db) db = openDatabase(config.dbPath);
@@ -61,12 +61,27 @@ export function openDatabase(file: string): Database.Database {
     if (version < 1) instance.transaction(() => migrateV1(instance))();
     if (version < 2) instance.transaction(() => migrateV2(instance))();
     if (version < 3) instance.transaction(() => migrateV3(instance))();
+    if (version < 4) instance.transaction(() => migrateV4(instance))();
     instance.transaction(() => seedLadders(instance))();
     return instance;
   } catch (err) {
     instance.close();
     throw err;
   }
+}
+
+// survival-64 规则上线：脚本语言列；新规则与旧规则成绩不可比，天梯积分与基准成绩清零（历史对局保留）。
+function migrateV4(instance: Database.Database): void {
+  const columns = instance.pragma('table_info(scripts)') as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === 'language')) {
+    instance.exec(`ALTER TABLE scripts ADD COLUMN language TEXT NOT NULL DEFAULT 'javascript'
+      CHECK(language IN ('javascript','python'))`);
+  }
+  instance.exec(`
+    UPDATE ladder_entries SET mu=25, sigma=8.333333333333334, rating=1000, games=0, wins=0,
+      avg_score=NULL, best_score=NULL, avg_ticks=NULL, last_match_at=NULL;
+    PRAGMA user_version = 4;
+  `);
 }
 
 function migrateV3(instance: Database.Database): void {

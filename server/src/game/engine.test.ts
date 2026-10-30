@@ -13,7 +13,7 @@ function config(mode: GameMode = 'solo', opts: Partial<MatchConfig> = {}): Match
     mode, teams: false, width: 24, height: 16, wrap: mode === 'score',
     foodCount: mode === 'solo' ? 1 : 3, maxTicks: mode === 'solo' ? 1500 : mode === 'score' ? 500 : 1000,
     targetScore: null, seed: 12345, moveTimeoutMs: 50, initTimeoutMs: 500,
-    memoryLimitMB: 32, matchCpuBudgetMs: 30000, ...opts,
+    memoryLimitMB: 32, matchCpuBudgetMs: 30000, ruleset: 'classic', maxHp: null, ...opts,
   };
 }
 

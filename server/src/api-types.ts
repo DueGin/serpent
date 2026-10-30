@@ -1,4 +1,4 @@
-import type { BuiltinBot, CheckReport, DeathReason, DecisionCode, Direction, EndReason, Frame, GameMode, MatchConfig, MatchKind, MatchStatus, ScriptState, ScriptVisibility, VersionStatus } from './types';
+import type { BuiltinBot, CheckReport, DeathReason, DecisionCode, Direction, EndReason, Frame, GameMode, MatchConfig, MatchKind, MatchStatus, Ruleset, ScriptLanguage, ScriptState, ScriptVisibility, VersionStatus } from './types';
 
 export interface AgentDTO { id: number; name: string; description: string; modelLabel: string; color: string;
   userId: number; ownerName: string; createdAt: number; lastSeenAt: number | null; keyPrefix?: string;  // keyPrefix 仅所有者
@@ -11,7 +11,7 @@ export interface AgentProfileDTO { agent: AgentDTO; scripts: ScriptSummaryDTO[];
   recentMatches: MatchSummaryDTO[] }
 
 export interface ScriptSummaryDTO { id: number; agentId: number; agentName: string; name: string; description: string;
-  visibility: ScriptVisibility; activeVersion: number | null; latestVersion: number; latestStatus: VersionStatus;
+  language: ScriptLanguage; visibility: ScriptVisibility; activeVersion: number | null; latestVersion: number; latestStatus: VersionStatus;
   createdAt: number; updatedAt: number; archived: boolean;
   ladders: Array<{ slug: string; entryId: number; rating: number; rank: number | null; games: number }> }
 export interface ScriptVersionDTO { id: number; scriptId: number; version: number; status: VersionStatus; note: string;
@@ -41,7 +41,7 @@ export interface ReviewOption { dir: Direction; legal: boolean; death: DeathReas
 export interface ReviewTick { tick: number; slot: number; decision: DecisionCode | null; moveMs: number | null;
   applied: Direction | null; options: ReviewOption[] }
 /** 列式逐拍序列：下标 i 即第 i 帧，长度为 to - from + 1（见 MatchReviewDTO.seriesRange）。 */
-export interface ReviewSeries { slot: number; score: number[]; length: number[]; alive: Array<0 | 1>;
+export interface ReviewSeries { slot: number; score: number[]; length: number[]; alive: Array<0 | 1>; hp: Array<number | null>;
   space: number[]; safeMoves: number[]; foodDist: Array<number | null>;
   decision: Array<DecisionCode | null>; moveMs: Array<number | null>; move: Array<Direction | null> }
 export type ReviewMomentKind = 'eat' | 'death' | 'kill' | 'win' | 'timeout' | 'error' | 'invalid' | 'reverse'
@@ -54,7 +54,8 @@ export interface ReviewDeath { tick: number; reason: DeathReason; decisionTick: 
 export interface ReviewParticipantStats { survivalTicks: number; decisions: number; ok: number; timeouts: number;
   errors: number; invalid: number; reverses: number; avgMoveMs: number | null; p95MoveMs: number | null;
   maxMoveMs: number | null; foods: number; ticksPerFood: number | null; avgSpace: number; minSpace: number;
-  lowSpaceTicks: number; riskyMoves: number; avgFoodDist: number | null }
+  lowSpaceTicks: number; riskyMoves: number; avgFoodDist: number | null;
+  minHp: number | null; lowHpTicks: number }   // lowHpTicks：存活且 hp ≤ 25 的帧数；classic 为 null / 0
 export interface ReviewParticipant { slot: number; name: string; color: string; team: number | null;
   agentId: number | null; scriptId: number | null; version: number | null; builtin: BuiltinBot | null;
   rank: number | null; score: number; length: number; alive: boolean; deathTick: number | null;
@@ -74,6 +75,7 @@ export interface ScriptTrendMatch { matchId: number; kind: MatchKind; mode: Game
   players: number; rank: number | null; score: number; length: number; alive: boolean; deathTick: number | null;
   deathReason: DeathReason | null; ticks: number; timeouts: number; errors: number; invalidMoves: number; createdAt: number }
 export interface ScriptTrendDTO { scriptId: number; scriptName: string; mode: GameMode | null;
+  ruleset: Ruleset;   // 只统计该规则集的对局（当前规则）
   versions: ScriptTrendVersion[]; recent: ScriptTrendMatch[] }
 
 export interface LadderDTO { id: number; slug: string; name: string; description: string;

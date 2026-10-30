@@ -1,5 +1,12 @@
 import type { GameMode, MatchConfig } from '../types';
 
+/** Stored configs written before rulesets existed lack these fields; they are classic. */
+export type StoredMatchConfig = Omit<MatchConfig, 'ruleset' | 'maxHp'> & Partial<Pick<MatchConfig, 'ruleset' | 'maxHp'>>;
+
+export function normalizeConfig(config: StoredMatchConfig): MatchConfig {
+  return { ...config, ruleset: config.ruleset ?? 'classic', maxHp: config.maxHp ?? null };
+}
+
 export { ENGINE_VERSION } from '../game/engine';
 
 export function defaultConfig(mode: GameMode, opts: { teams?: boolean; seed?: number; maxTicks?: number; players?: number } = {}): MatchConfig {
@@ -19,5 +26,8 @@ export function defaultConfig(mode: GameMode, opts: { teams?: boolean; seed?: nu
     initTimeoutMs: 500,
     memoryLimitMB: 32,
     matchCpuBudgetMs: 30_000,
+    // 脚手架：规则实现（survival-64）落地前仍生成 classic 配置。
+    ruleset: 'classic',
+    maxHp: null,
   };
 }
