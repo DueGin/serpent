@@ -7,3 +7,4 @@ dist
 .screenshots
 server/data
 *.db
+.env

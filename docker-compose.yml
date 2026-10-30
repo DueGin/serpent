@@ -1,0 +1,32 @@
+# SERPENT 一体化部署。
+#   服务器直接用发布镜像：  docker compose pull && docker compose up -d
+#   本地从源码构建：        docker compose up -d --build
+# 可在同目录 .env 中覆盖下列变量（见 .env.example）。
+name: serpent
+
+services:
+  serpent:
+    image: ${SERPENT_IMAGE:-ghcr.io/duegin/serpent:latest}
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
+    # 由 tini 作为 1 号进程转发信号并回收子进程（Python 沙箱会启动子进程）。
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    ports:
+      - "${SERPENT_PORT:-8008}:8008"
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8008}
+      # 为空时首次启动自动生成并保存到数据卷。
+      JWT_SECRET: ${JWT_SECRET:-}
+      LADDER_AUTO: ${LADDER_AUTO:-1}
+      RUNNER_WORKERS: ${RUNNER_WORKERS:-}
+    volumes:
+      - serpent-data:/app/server/data
+
+volumes:
+  serpent-data:

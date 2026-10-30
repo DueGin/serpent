@@ -98,7 +98,8 @@ serpent/
 - **天梯**：solo 跑固定 10 seed 基准；battle/score/团队使用 OpenSkill。后台匹配器可被 `LADDER_AUTO=0` 关闭，手动 `queue` 仍会开赛。
 - **团队阵容**：`lineup=[scriptId,scriptId]`，属于同队两个不同 Agent；不是 Agent ID。
 - **类型双份**：修改 `server/src/types.ts` 或 `api-types.ts` 时同步 `web/src/types.ts`。
-- **文档与示例在 dist 的运行路径**：`docsRouter` 运行时读取 `server/src/docs`，示例资源读取仓库根 `examples/scripts`；部署 `node dist/` 时也要提供这些源码资源。
+- **文档与示例在 dist 的运行路径**：`docsRouter` 运行时读取 `server/src/docs`，示例资源读取仓库根 `examples/scripts`；部署 `node dist/` 时也要提供这些源码资源。`Dockerfile` 的 runtime 阶段按同样的目录结构复制它们，新增运行时资源（如沙箱入口文件）时要同步改 `Dockerfile`。
+- **部署与发版**：`docker-compose.yml` 单服务一体化部署；`.github/workflows/ci.yml` 跑测试与镜像冒烟，`release.yml` 在 `vX.Y.Z` 标签上发布多架构镜像到 GHCR 并创建 Release，标签必须等于 `package.json` 的版本。详见 `docs/deploy.md`。
 - **MCP 编译边界**：`mcp/register.ts` 只擦除 SDK 1.32.2 的 zod v3/v4 深层联合泛型，工具和 prompt 仍做运行时 Zod 解析。不要直接恢复 26 个深层 `registerTool` 泛型调用，否则 tsc 会耗尽堆。
 
 ### 2.4 改代码时的约定

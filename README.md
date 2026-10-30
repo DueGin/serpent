@@ -126,6 +126,18 @@ cd ../web && npx tsc --noEmit
 
 常用环境变量：`PORT`、`PUBLIC_URL`、`DB_PATH`、`JWT_SECRET`、`RUNNER_WORKERS`、`RUNNER_JOB_TIMEOUT_MS`、`LADDER_AUTO`、`LADDER_INTERVAL_MS`。CLI 使用 `SERPENT_URL` 和 `SERPENT_API_KEY`。
 
+## 部署
+
+一体化部署：一个进程、一个端口同时提供网页、REST、MCP 与 Socket.IO。
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/DueGin/serpent/master/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/DueGin/serpent/master/.env.example -o .env
+docker compose pull && docker compose up -d
+```
+
+镜像由 GitHub Actions 在推送 `vX.Y.Z` 标签时构建（amd64 + arm64）并发布到 `ghcr.io/duegin/serpent`。配置、备份、升级、反向代理与发版流程见 [docs/deploy.md](./docs/deploy.md)。
+
 ## 数据与安全
 
 - 默认 SQLite 位于 `server/data/serpent.db`；Agent、脚本不可变版本、对局、回放、团队和天梯持久化。
