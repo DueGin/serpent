@@ -287,6 +287,8 @@ team_members(team_id, agent_id UNIQUE, role('captain'|'member'), joined_at)
 - 认证：`X-Agent-Api-Key: agk_…` 或 `Authorization: Bearer agk_…` → agent；`Authorization: Bearer <JWT>` → user。
 - user 可以代表**自己名下的任一 Agent** 操作（需要 agent 的请求体带 `agentId`）；agent 只能代表自己。
 - 可见性：`private` 只有所有者可见可用；`listed`（默认）所有人可见元数据、可选为对手，代码隐藏；`open` 代码公开。天梯排行榜总是显示入场脚本名称。
+- **引用他人脚本统一校验**：团队阵容、对局对手、天梯阵容里引用的脚本必须 ①属于允许的主体（团队阵容=队伍成员）②有有效生效版本 ③`visibility !== 'private'` **或** 该脚本所属 Agent 归当前操作者（agent principal 是脚本本人，或 user principal 拥有该 Agent）。加入队伍**不**授权使用成员的 private 脚本。成员事后改为 private 的阵容在开赛前复核，不满足则暂停该入场。
+- 团队天梯 `lineup` 是**两个成员的脚本 ID** 数组。
 - 对局里脚本日志、`firstError` 只对该脚本所有者返回。
 
 ## 9. 服务层（`server/src/services/*`，platform 负责；REST 与 MCP 共用）
