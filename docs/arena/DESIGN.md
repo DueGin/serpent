@@ -535,7 +535,7 @@ Socket.IO（`server/src/realtime.ts`，platform 负责，**匿名也可连**）�
 | worker | 独占文件 |
 |---|---|
 | **core**（codex） | `server/src/types.ts`、`server/src/game/**`、`server/src/sandbox/**`、`server/src/runner/**` |
-| **platform**（codex） | `server/src/db.ts`、`server/src/auth.ts`、`server/src/http.ts`、`server/src/config.ts`、`server/src/crypto.ts`、`server/src/api-types.ts`、`server/src/services/**`、`server/src/routes/**`、`server/src/realtime.ts`、`server/src/index.ts`、`server/src/*.test.ts` |
+| **platform**（codex） | `server/src/db.ts`、`server/src/auth.ts`、`server/src/http.ts`、`server/src/config.ts`、`server/src/crypto.ts`、`server/src/api-types.ts`、`server/src/services/**`、`server/src/routes/**`、`server/src/realtime.ts`、`server/src/app.ts`、`server/src/index.ts`、`server/src/*.test.ts` |
 | **mcp**（kimi） | `server/src/mcp/**`、`server/src/docs/**`、`server/src/cli/**`、`examples/**`；最后阶段负责重写 `AGENTS.md`、`README.md` |
 | **web**（kimi） | `web/**` |
 
@@ -543,6 +543,8 @@ Socket.IO（`server/src/realtime.ts`，platform 负责，**匿名也可连**）�
 - `package.json`、`pnpm-lock.yaml` 由协调者维护，依赖已装好。确需新依赖：web 可以在 `web/` 下 `pnpm add <pkg> --registry=https://registry.npmmirror.com`（官方源不通）；server 侧需要新依赖先写进状态文件。
 - **不要执行任何 git 写操作**（commit/add/stash/checkout/reset/rm）。协调者负责提交。
 - 新测试文件命名 `*.test.ts` 放在 `server/src/` 下即可被 `pnpm --filter server test` 自动收集（glob）。
+- `server/src/app.ts`（platform）导出 `createApp(): express.Express`（装好全部路由、`/api/docs`、`/mcp`，**不 listen、不启动匹配器**）和 `startServer()`；`index.ts` 只负责 listen + realtime + 匹配器 + 优雅退出。测试用 `createApp()` 配合 `setDb(openDatabase(':memory:'))`。
+- 并行期间跑服务做自测，**用自己的端口和库**，不要占默认 8008/3308：core 不需要；platform `PORT=8101 DB_PATH=/tmp/serpent-platform.db`；mcp `PORT=8102 DB_PATH=/tmp/serpent-mcp.db`；web 后端 `PORT=8103 DB_PATH=/tmp/serpent-web.db`、前端 vite `--port 3313`（vite 代理目标用环境变量 `SERPENT_API`，默认 `http://localhost:8008`）。用完关掉自己起的进程。
 - 每个 worker 维护 `docs/arena/status/<worker>.md`：已完成、进行中、给别人的接口说明、契约问题。关键里程碑（如骨架就绪）要及时写。
 
 ## 16. 验收
