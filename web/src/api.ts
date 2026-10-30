@@ -9,6 +9,7 @@ import type {
   DocSummary,
   DryRunResult,
   FrameDTO,
+  HealthDTO,
   GameMode,
   LadderDTO,
   LadderEntryDTO,
@@ -74,7 +75,7 @@ function send<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unkno
 export const login = (username: string, password: string) => send<{ token: string; user: User }>('/auth/login', 'POST', { username, password });
 export const register = (username: string, password: string) => send<{ token: string; user: User }>('/auth/register', 'POST', { username, password });
 export const me = () => req<{ user: User }>('/auth/me');
-export const getHealth = () => req<{ ok: boolean }>('/health');
+export const getHealth = () => req<HealthDTO>('/health');
 export const getStats = () => req<PlatformStats>('/stats');
 
 export const listAgents = () => req<{ data: AgentDTO[] }>('/agents');

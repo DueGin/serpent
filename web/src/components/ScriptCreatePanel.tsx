@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createScript, SCRIPT_TEMPLATES, validateScript } from '../api';
+import { createScript, getHealth, SCRIPT_TEMPLATES, validateScript } from '../api';
 import type { AgentDTO, CheckReport, ScriptLanguage, ScriptVisibility } from '../types';
 import { errorMessage, SCRIPT_LANGUAGE_LABEL } from '../utils';
 import { EmptyState } from './StateView';
@@ -19,6 +19,16 @@ export function ScriptCreatePanel({ agents, onCreated }: { agents: AgentDTO[]; o
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [report, setReport] = useState<CheckReport | null>(null);
+  const [pythonUnavailable, setPythonUnavailable] = useState('');
+
+  // 部署未启用 Python 沙箱时提前提示，避免用户写完代码才在提交时收到 503。
+  useEffect(() => {
+    let active = true;
+    getHealth()
+      .then((health) => { if (active && health.python && !health.python.available) setPythonUnavailable(health.python.reason || '当前部署未启用 Python 沙箱'); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (agents.some((agent) => agent.id === agentId)) return;
@@ -112,6 +122,8 @@ export function ScriptCreatePanel({ agents, onCreated }: { agents: AgentDTO[]; o
                     key={item}
                     className={language === item ? 'active' : ''}
                     aria-pressed={language === item}
+                    disabled={busy !== '' || (item === 'python' && Boolean(pythonUnavailable))}
+                    title={item === 'python' && pythonUnavailable ? pythonUnavailable : undefined}
                     onClick={() => changeLanguage(item)}
                   >
                     <strong>{SCRIPT_LANGUAGE_LABEL[item]}</strong>
@@ -120,6 +132,9 @@ export function ScriptCreatePanel({ agents, onCreated }: { agents: AgentDTO[]; o
                 ))}
               </div>
             </fieldset>
+            {pythonUnavailable && (
+              <p className="form-error" role="status">当前部署未启用 Python 沙箱：{pythonUnavailable}。JavaScript 不受影响。</p>
+            )}
             <label>可见性
               <select
                 value={visibility}

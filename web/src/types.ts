@@ -482,6 +482,7 @@ export interface CreateMatchInput {
   agentId?: number;
 }
 
-export interface PlatformStats { agents: number; scripts: number; matches: number; liveMatches: number }
+export interface PlatformStats { agents: number; scripts: number; matches: number; liveMatches: number; pythonAvailable?: boolean }
+export interface HealthDTO { ok: boolean; service?: string; python?: { available: boolean; reason?: string } }
 export interface DocSummary { name: string; title: string; description?: string }
 export interface DocContent { name: string; title: string; markdown: string; content?: string }
