@@ -1,24 +1,24 @@
 # SERPENT 游戏规则
 
-当前新对局使用 `survival-64` 规则集（引擎版本 `serpent-engine-3`）。历史 `classic` 回放仍可读取；回放会按保存时的规则集重建，不会把旧对局改写成新规则。
+当前新对局使用 `survival` 规则集（引擎版本 `serpent-engine-3`）。历史 `survival-64`（64×64、score 不提前结束）与 `classic` 回放仍可读取；回放会按保存时的规则集重建，不会把旧对局改写成新规则。
 
 ## 1. 基本规则
 
 - 坐标 `x` 向右、`y` 向下，`(0,0)` 在左上角。
 - 方向为 `up`、`down`、`left`、`right`，禁止 180° 掉头。
-- 所有 survival-64 模式使用 **64×64** 有边界地图（`wrap=false`）。越界立即撞墙。
+- 个人赛（`solo`、个人 `score` / `battle`）使用 **16×16**，2v2 团队赛使用 **32×32**，均为有边界地图（`wrap=false`）。越界立即撞墙。
 - 吃到一个食物得 **10 分**、身体长度增加 **1**，生命值回满到 `maxHp=100`。
-- survival-64 的食物数为参赛人数 × 4（solo 为 4，2/3/4 人为 8/12/16）；食物被吃后会在随机空格立即补齐。
+- 食物数为参赛人数 × 4（solo 为 4，2/3/4 人为 8/12/16）；食物被吃后会在随机空格立即补齐。
 - 食物位置只由 `config.seed` 派生的引擎 RNG 决定；脚本和内置 bot 不会消耗该 RNG。
 - 对局以 tick 推进和结束，不使用真实墙钟计时。脚本出错、超时或非法移动不会被自动替换成贪心方向。
 
-## 2. 模式（survival-64）
+## 2. 模式（survival）
 
 | mode | 地图 | 碰撞 | 结束条件 | 排名与成绩 |
 |---|---|---|---|---|
-| `solo` | 64×64 | 撞墙、咬自己或生命值耗尽死亡 | 死亡或 `maxTicks`（默认 1500） | 只有 1 人，`rank=1`；成绩看 `score` |
-| `score` | 64×64 | 撞墙、咬自己、撞非队友身体或头对头死亡；队友可穿过 | 有人达到 `targetScore`、到 `maxTicks`（默认 500）或全死 | 分数降序；同分同名次 |
-| `battle` | 64×64 | 与 score 相同：撞墙、自己、非队友身体、头对头或生命值耗尽死亡 | 存活数 ≤1 或到 `maxTicks`（默认 1000） | 存活者先按长度、再按分数降序；死者按死亡 tick 越晚越好；同 tick 同名次 |
+| `solo` | 16×16 | 撞墙、咬自己或生命值耗尽死亡 | 死亡或 `maxTicks`（默认 1500） | 只有 1 人，`rank=1`；成绩看 `score` |
+| `score` | 16×16；2v2 为 32×32 | 撞墙、咬自己、撞非队友身体、头对头或生命值耗尽死亡；队友可穿过 | 只剩一条蛇（2v2 为只剩一队）存活、有人达到 `targetScore`、到 `maxTicks`（默认 500）或全死 | 分数降序（2v2 比全队总分）；同分同名次。最后存活者不一定第一 |
+| `battle` | 16×16；2v2 为 32×32 | 与 score 相同：撞墙、自己、非队友身体、头对头或生命值耗尽死亡 | 存活数 ≤1（2v2 为只剩一队）或到 `maxTicks`（默认 1000） | 存活者先按长度、再按分数降序；死者按死亡 tick 越晚越好；同 tick 同名次 |
 
 `targetScore` 默认为 `null`，表示不启用目标分。`score` 和 `battle` 通常为 2～4 条蛇；组队时必须固定 4 条。
 
@@ -34,7 +34,7 @@
 
 ## 4. 出生点与初始状态
 
-初始长度均为 3。slot 与出生点、初始方向固定如下（64×64 survival-64）：
+初始长度均为 3。slot 与出生点、初始方向固定如下（`w`、`h` 为地图宽高，16×16 时 `w-4=12`）：
 
 | slot | 头部坐标 | 初始方向 |
 |---|---|---|
@@ -95,7 +95,7 @@ team-battle 的团队名次直接映射到个人：胜方两人 `rank=1`，负�
 
 ```ts
 interface MatchConfig {
-  ruleset: 'survival-64' | 'classic';
+  ruleset: 'survival' | 'survival-64' | 'classic';
   mode: 'solo' | 'score' | 'battle';
   teams: boolean;
   width: number;
@@ -113,7 +113,7 @@ interface MatchConfig {
 }
 ```
 
-survival-64 默认值：`width=64`、`height=64`、`wrap=false`、`maxHp=100`、`foodCount=4×参赛人数`；`maxTicks` 为 solo 1500、score 500、battle 1000。沙箱默认 `moveTimeoutMs=50`、`initTimeoutMs=500`、`memoryLimitMB=32`、单局 CPU 预算 30000ms，代码大小 64KB。
+survival 默认值：个人赛与 solo `width=height=16`，2v2 `width=height=32`，`wrap=false`、`maxHp=100`、`foodCount=4×参赛人数`；`maxTicks` 为 solo 1500、score 500、battle 1000。沙箱默认 `moveTimeoutMs=50`、`initTimeoutMs=500`、`memoryLimitMB=32`、单局 CPU 预算 30000ms，代码大小 64KB。
 
 创建测试赛或表演赛时可提供 `seed` 与 `maxTicks`；地图尺寸、穿墙和食物数由规则集决定。`seed` 是 uint32。不要把默认值硬编码到脚本，读取每拍状态的 `width`、`height`、`wrap`、`maxHp` 与 `you.hp`。
 

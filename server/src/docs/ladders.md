@@ -1,6 +1,6 @@
 # 天梯与团队赛
 
-天梯用于持续评估脚本或团队。当前赛季使用 `survival-64` 规则集；**规则升级后所有天梯积分、场次与 solo 基准成绩清零**，历史对局和回放仍保留并标记原规则集。入场前应先通过检测并运行测试赛；更换代码不会修改旧版本快照，只影响之后参赛使用的生效版本。
+天梯用于持续评估脚本或团队。当前赛季使用 `survival` 规则集（个人赛 16×16、2v2 团队赛 32×32）；**规则升级后所有天梯积分、场次与 solo 基准成绩清零**，历史对局和回放仍保留并标记原规则集。入场前应先通过检测并运行测试赛；更换代码不会修改旧版本快照，只影响之后参赛使用的生效版本。
 
 ## 1. 五个默认天梯
 
@@ -12,20 +12,20 @@
 | `team-battle` | `team` | `battle` | 是 | 4，2 队 | 以团队为单位的 OpenSkill 展示分 |
 | `team-score` | `team` | `score` | 是 | 4，2 队 | 以团队为单位的 OpenSkill 展示分 |
 
-所有新赛季天梯对局使用 64×64、无穿墙、生命值 100 和参赛人数 × 4 个食物。个人天梯预置 `greedy`、`coward`、`random` 三个 builtin 入场者；团队天梯预置 house 队伍，阵容为 `greedy + coward`。
+所有新赛季天梯对局使用个人赛 16×16、2v2 团队赛 32×32、无穿墙、生命值 100 和参赛人数 × 4 个食物；score 与 battle 在只剩一方存活时结束。个人天梯预置 `greedy`、`coward`、`random` 三个 builtin 入场者；团队天梯预置 house 队伍，阵容为 `greedy + coward`。
 
 ## 2. 新赛季清零与规则集
 
-规则集由对局配置中的 `ruleset` 固定。升级到 survival-64 时：
+规则集由对局配置中的 `ruleset` 固定。每次升级规则集（classic → survival-64 → survival）时：
 
 - 天梯入场项保留脚本和名称，但 `rating`、OpenSkill `mu/sigma`、局数、胜场、胜率与 solo 的 `avg_score/best_score/avg_ticks` 从新赛季初值重新开始；
 - 旧赛季对局不参与当前榜单、趋势或匹配，只能在历史记录和复盘中查看；
 - 脚本新版本可以继续使用，参赛时保存当时版本快照；
-- 读取旧配置时缺失 `ruleset` 按 `classic` 解释，不要把旧成绩与 survival-64 混算。
+- 读取旧配置时缺失 `ruleset` 按 `classic` 解释，不要把不同规则集的成绩混算。
 
 ## 3. solo 基准榜
 
-solo 不使用其他玩家匹配。以下事件会异步运行固定 10 个 seed 的 survival-64 基准赛：
+solo 不使用其他玩家匹配。以下事件会异步运行固定 10 个 seed 的 survival 基准赛：
 
 - 脚本加入 solo 天梯；
 - 更换 solo 入场脚本的生效版本。
@@ -57,7 +57,7 @@ solo 入场记录的 `rating` 字段写平均分。优化目标是稳定吃到�
 2. `join_ladder` 提供 `slug` 和 `scriptId`；
 3. `my_ladder_entries` 查看 `entryId`；
 4. `queue_ladder_match` 手动排队，或等待后台匹配；
-5. `get_leaderboard` 查看当前 survival-64 排名，`leave_ladder` 退出。
+5. `get_leaderboard` 查看当前 survival 排名，`leave_ladder` 退出。
 
 ### REST
 
@@ -118,7 +118,7 @@ curl -X POST http://localhost:8008/api/ladders/team-battle/entries \
   -d '{"teamId":1,"lineup":[11,12]}'
 ```
 
-队友身体可穿过，敌人在 score/battle 中仍按 survival-64 的身体和头对头规则处理。官方 `team-aware` 示例展示食物分工、站位和敌人规避。
+队友身体可穿过，敌人在 score/battle 中仍按 survival 的身体和头对头规则处理。官方 `team-aware` 示例展示食物分工、站位和敌人规避。
 
 ## 8. 限额与排错
 

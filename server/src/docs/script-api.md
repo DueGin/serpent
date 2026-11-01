@@ -155,7 +155,7 @@ interface Point { x: number; y: number }
 - `snakes` 包含自己，也包含已死亡的蛇；死亡蛇 `alive=false`，`body` 保留死亡时位置，`head` 可能为 `null`。**死亡蛇的尸体不再构成障碍**，这些历史 `body` 只供观察，构建碰撞图时必须跳过 `alive=false` 的蛇。
 - `body[0]` 是存活蛇的头；使用前应检查 `alive`、`head` 和数组长度，不要假设自定义试跑输入一定完整。
 - `foods` 是当前全部食物坐标。
-- `maxHp` 是生命值上限，`you.hp` / `snakes[].hp` 是当前生命值。新规则 `survival-64` 开局 100，每拍未进食减 1，吃到果实回满，归零死亡；历史 `classic` 对局两者均为 `null`。不要写死尺寸、穿墙或生命值规则，读取 `width/height/wrap/maxHp/hp`。
+- `maxHp` 是生命值上限，`you.hp` / `snakes[].hp` 是当前生命值。当前规则 `survival`（及历史 `survival-64`）开局 100，每拍未进食减 1，吃到果实回满，归零死亡；历史 `classic` 对局两者均为 `null`。不要写死尺寸、穿墙或生命值规则，读取 `width/height/wrap/maxHp/hp`。
 - `legalMoves` 已去掉 180° 掉头；非穿墙地图还去掉出界方向。它**不保证安全**：仍可能撞自己或别人，也可能形成头对头。
 - 坐标系为 `x` 向右、`y` 向下，`(0,0)` 在左上角。`wrap=true` 时越过一边会从另一边出现。
 
@@ -195,7 +195,7 @@ module.exports = { init: init, move: move };
 构建障碍图时同时考虑规则和模式：
 
 - 自己的身体在三种模式中都要处理。
-- `survival-64` 的 `battle` 和 `score` 中，非队友蛇身体都是障碍；还要额外评估敌人下一拍进入同一格或互换头部位置的风险。头对头比较移动前长度，短者死，等长同归于尽。
+- `survival` 的 `battle` 和 `score` 中，非队友蛇身体都是障碍；还要额外评估敌人下一拍进入同一格或互换头部位置的风险。头对头比较移动前长度，短者死，等长同归于尽。
 - 历史 `classic`（`maxHp=null`）的 `score` 中其他蛇不伤害你；`classic battle` 头对头双方死亡。不要把新规则强套在历史复盘上。
 - `teams=true` 时，同 `team` 的队友身体可穿过、可重叠，头对头也不会死。
 - `wrap=true` 时，距离、BFS、洪泛和邻居计算都要做环绕，不能只给移动落点做环绕。
@@ -292,4 +292,4 @@ interface DryRunResult {
 - `flood-fill`：综合安全格、可达空间、食物、尾部启发和敌人风险。
 - `team-aware`：队友可穿行的空间评估、食物分工、站位与敌人规避。
 
-MCP 中读取 `serpent://examples/{name}`；JavaScript 仓库文件位于 `examples/scripts/{name}.js`。Python 示例为 `examples/scripts/greedy-bfs.py`、`examples/scripts/flood-fill.py`，MCP 资源分别为 `serpent://examples/greedy-bfs-python`、`serpent://examples/flood-fill-python`。两种 Python 示例都从 state 读取地图、穿墙和生命值字段，适用于 classic 与 survival-64。
+MCP 中读取 `serpent://examples/{name}`；JavaScript 仓库文件位于 `examples/scripts/{name}.js`。Python 示例为 `examples/scripts/greedy-bfs.py`、`examples/scripts/flood-fill.py`，MCP 资源分别为 `serpent://examples/greedy-bfs-python`、`serpent://examples/flood-fill-python`。两种 Python 示例都从 state 读取地图、穿墙和生命值字段，适用于 classic、survival-64 与当前 survival 规则。

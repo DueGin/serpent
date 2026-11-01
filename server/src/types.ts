@@ -7,9 +7,15 @@ export type ScriptVisibility = 'private' | 'listed' | 'open';
 export type VersionStatus = 'pending' | 'valid' | 'invalid';
 export type DeathReason = 'wall' | 'self' | 'snake' | 'head' | 'starve' | 'disqualified';
 export type ScriptLanguage = 'javascript' | 'python';
-/** classic: 旧规则（历史对局回放用）；survival-64: 64×64、有边界、生命值。 */
-export type Ruleset = 'classic' | 'survival-64';
-export const CURRENT_RULESET: Ruleset = 'survival-64';
+/**
+ * classic：旧规则（24×16 / 28×20、score 穿墙），仅用于历史回放。
+ * survival-64：64×64、有边界、生命值，仅用于历史回放。
+ * survival：当前规则。个人赛 16×16、2v2 团队赛 32×32；score 只剩一方存活时结束。
+ * 结算行为按 ruleset 区分，已记录的对局必须按其原规则逐拍重放。
+ */
+export type Ruleset = 'classic' | 'survival-64' | 'survival';
+export const CURRENT_RULESET: Ruleset = 'survival';
+export function hasHitPoints(ruleset: Ruleset): boolean { return ruleset !== 'classic'; }
 export const DEFAULT_MAX_HP = 100;
 export type EndReason = 'last_alive' | 'all_dead' | 'max_ticks' | 'target_score';
 

@@ -17,7 +17,7 @@ function blockedSet(state: GameState, slot: number, coward: boolean): Set<string
     const body = snake.slot === slot ? snake.body.slice(0, -1) : snake.body;
     for (const point of body) blocked.add(pointKey(point));
   }
-  if ((coward || state.config.ruleset === 'survival-64') && state.mode !== 'solo') {
+  if ((coward || state.config.ruleset !== 'classic') && state.mode !== 'solo') {
     for (const snake of state.snakes) {
       if (!snake.alive || snake.slot === slot || (state.teams && snake.team === me.team)) continue;
       // Avoid immediate head-to-head with an opponent that is at least as long.

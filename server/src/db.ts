@@ -39,7 +39,7 @@ export interface TeamRow {
 }
 
 let db: Database.Database | null = null;
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export function getDb(): Database.Database {
   if (!db) db = openDatabase(config.dbPath);
@@ -63,12 +63,22 @@ export function openDatabase(file: string): Database.Database {
     if (version < 2) instance.transaction(() => migrateV2(instance))();
     if (version < 3) instance.transaction(() => migrateV3(instance))();
     if (version < 4) instance.transaction(() => migrateV4(instance))();
+    if (version < 5) instance.transaction(() => migrateV5(instance))();
     instance.transaction(() => seedLadders(instance))();
     return instance;
   } catch (err) {
     instance.close();
     throw err;
   }
+}
+
+// survival 规则上线（个人赛 16×16、团队赛 32×32）：地图变化后成绩不可比，再次清零天梯积分与基准成绩。
+function migrateV5(instance: Database.Database): void {
+  instance.exec(`
+    UPDATE ladder_entries SET mu=25, sigma=8.333333333333334, rating=1000, games=0, wins=0,
+      avg_score=NULL, best_score=NULL, avg_ticks=NULL, last_match_at=NULL;
+    PRAGMA user_version = 5;
+  `);
 }
 
 // survival-64 规则上线：脚本语言列；新规则与旧规则成绩不可比，天梯积分与基准成绩清零（历史对局保留）。

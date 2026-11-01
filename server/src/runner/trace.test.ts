@@ -13,6 +13,14 @@ function classicConfig(mode: GameMode, seed: number, maxTicks: number, players: 
     ruleset: 'classic', maxHp: null };
 }
 
+/**
+ * 遥测布局测试需要对局在某个参赛者退出后继续进行：survival-64（64×64、score 不提前结束）
+ * 仍是受支持的历史规则，固定使用它，测试意图与当前地图尺寸和结束条件无关。
+ */
+function continuingConfig(mode: GameMode, opts: Parameters<typeof defaultConfig>[1]): MatchConfig {
+  return { ...defaultConfig(mode, opts), width: 64, height: 64, ruleset: 'survival-64' };
+}
+
 /** 旧回放的 config 没有 ruleset/maxHp；去掉这两个字段后与旧 runner 的输出逐字节比较。 */
 function legacyReplayHash(replay: Replay): string {
   const { ruleset: _ruleset, maxHp: _maxHp, ...config } = replay.config;
@@ -88,7 +96,7 @@ test('无限循环单独触发超时码，不依赖正常脚本能在极短时�
 
 test('正常脚本与内置 bot 遥测按 replay.players 排列，已死者不再决策', async () => {
   const result = await runSimulation({
-    config: { ...defaultConfig('score', { seed: 22, maxTicks: 52, players: 2 }), moveTimeoutMs: 1000, initTimeoutMs: 1000 },
+    config: { ...continuingConfig('score', { seed: 22, maxTicks: 52, players: 2 }), moveTimeoutMs: 1000, initTimeoutMs: 1000 },
     participants: [
       { slot: 1, name: '内置', team: null, source: { kind: 'builtin', bot: 'greedy' } },
       script(0, 'function move(){return false}'),
@@ -109,7 +117,7 @@ test('正常脚本与内置 bot 遥测按 replay.players 排列，已死者不�
 
 test('撞墙死亡后不再记录脚本耗时，死亡轮与下一轮按 tick 对齐', async () => {
   const result = await runSimulation({
-    config: { ...defaultConfig('battle', { seed: 9, maxTicks: 6, players: 4 }), moveTimeoutMs: 1000, initTimeoutMs: 1000 },
+    config: { ...continuingConfig('battle', { seed: 9, maxTicks: 6, players: 4 }), moveTimeoutMs: 1000, initTimeoutMs: 1000 },
     participants: [script(0, 'function move(){return "up"}'),
       ...[1, 2, 3].map(slot => script(slot, 'function move(s){return s.you.dir}'))],
   });
@@ -169,7 +177,7 @@ test('初始化失格不会伪造 move 决策轮', async () => {
 
 test('初始化失格者与不连续 slot 仍按 replay.players 排列，内置与已死耗时为 null', async () => {
   const result = await runSimulation({
-    config: { ...defaultConfig('score', { seed: 17, maxTicks: 2, players: 2 }), initTimeoutMs: 1000 },
+    config: { ...continuingConfig('score', { seed: 17, maxTicks: 2, players: 2 }), initTimeoutMs: 1000 },
     participants: [script(3, 'function init(){throw Error("初始化失败")} function move(){return "up"}'),
       { slot: 1, name: '内置', team: null, source: { kind: 'builtin', bot: 'greedy' } }],
   });

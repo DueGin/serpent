@@ -7,8 +7,8 @@ export type ScriptVisibility = 'private' | 'listed' | 'open';
 export type VersionStatus = 'pending' | 'valid' | 'invalid';
 export type DeathReason = 'wall' | 'self' | 'snake' | 'head' | 'starve' | 'disqualified';
 export type ScriptLanguage = 'javascript' | 'python';
-export type Ruleset = 'classic' | 'survival-64';
-export const CURRENT_RULESET: Ruleset = 'survival-64';
+export type Ruleset = 'classic' | 'survival-64' | 'survival';
+export const CURRENT_RULESET: Ruleset = 'survival';
 export const DEFAULT_MAX_HP = 100;
 export type EndReason = 'last_alive' | 'all_dead' | 'max_ticks' | 'target_score';
 export interface Point { x: number; y: number }

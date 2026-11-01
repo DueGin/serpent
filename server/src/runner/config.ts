@@ -15,8 +15,9 @@ export function defaultConfig(mode: GameMode, opts: { teams?: boolean; seed?: nu
   const players = mode === 'solo' ? 1 : teams ? 4 : Math.max(2, Math.min(4, opts.players ?? 4));
   return {
     mode, teams,
-    width: 64,
-    height: 64,
+    // 个人赛（含 solo）16×16，2v2 团队赛 32×32。
+    width: teams ? 32 : 16,
+    height: teams ? 32 : 16,
     wrap: false,
     foodCount: players * 4,
     maxTicks: opts.maxTicks ?? (mode === 'solo' ? 1500 : mode === 'score' ? 500 : 1000),
@@ -26,7 +27,7 @@ export function defaultConfig(mode: GameMode, opts: { teams?: boolean; seed?: nu
     initTimeoutMs: 500,
     memoryLimitMB: 32,
     matchCpuBudgetMs: 30_000,
-    ruleset: 'survival-64',
+    ruleset: 'survival',
     maxHp: 100,
   };
 }

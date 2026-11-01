@@ -118,3 +118,15 @@ def move(state):         # 必须，每拍一次
 | 协调者 | 共享类型、`db.ts` 迁移、`AGENTS.md`、`README.md`、`docs/arena/**`、合并与集成验收 |
 
 三人各在独立 worktree / 分支工作，合并由协调者完成。只改自己的文件；发现需要他人配合时写进自己的状态文件。
+
+---
+
+## 后续调整：规则集 `survival`（取代 survival-64 作为当前规则）
+
+用户在验收后调整：
+
+- 地图：solo、个人 score、个人 battle 为 **16×16**；2v2 团队赛（score / battle）为 **32×32**。
+- score 也在只剩一条蛇（2v2 为只剩一队）存活时结束（`endReason='last_alive'`），名次仍按分数（2v2 按全队总分）。
+- 天梯积分与基准成绩再次清零（DB `user_version=5`），历史对局保留。
+
+实现上新增规则集 `survival`（`CURRENT_RULESET`），而不是修改 `survival-64`：已记录的 survival-64 对局必须按原结束条件逐拍重放，否则回放会出现“对局结束后仍有方向记录”的错误。生命值、碰撞结算对 `survival-64` 与 `survival` 相同（`hasHitPoints(ruleset)`），只有提前结束仅对 `survival` 生效。引擎版本仍为 `serpent-engine-3`，行为由配置中的 `ruleset` 区分。

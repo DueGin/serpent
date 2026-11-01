@@ -60,7 +60,10 @@ test('default config obeys tick modes and teams', () => {
   assert.equal(defaultConfig('score').maxTicks, 500);
   assert.equal(defaultConfig('battle').maxTicks, 1000);
   assert.equal(defaultConfig('score').wrap, false);
-  assert.equal(defaultConfig('score').width, 64);
+  assert.equal(defaultConfig('score').width, 16);
+  assert.equal(defaultConfig('solo').height, 16);
+  assert.equal(defaultConfig('battle', { teams: true }).width, 32);
+  assert.equal(defaultConfig('battle').ruleset, 'survival');
   assert.equal(defaultConfig('solo').maxHp, 100);
   assert.equal(defaultConfig('battle', { players: 2 }).foodCount, 8);
   assert.equal(defaultConfig('battle', { teams: true }).foodCount, 16);
@@ -75,7 +78,7 @@ test('listScenarios returns eight independent, complete states', () => {
   assert.notEqual(listScenarios()[0]!.state.you.body[0]!.x, -100);
   const edge = scenarios.find((scenario) => scenario.id === 'edge-wall')!;
   assert.ok(!edge.state.legalMoves.includes('left'));
-  assert.equal(edge.state.width, 64);
+  assert.equal(edge.state.width, 16);
   assert.equal(scenarios.find((scenario) => scenario.id === 'low-hp-food')?.state.you.hp, 6);
   const trap = scenarios.find((scenario) => scenario.id === 'trap-one-exit')!;
   for (const direction of trap.state.legalMoves) {
@@ -145,7 +148,10 @@ test('fifty consecutive invalid decisions keep direction then disqualify without
 });
 
 test('mid-match disqualification preserves replay with surviving participants', async () => {
-  const result = await simulate({ config: defaultConfig('score', { seed: 22, maxTicks: 70, players: 2 }), participants: [
+  // survival-64 keeps a score match running after one participant leaves, which is what this
+  // replay test needs; the current ruleset would end a two-player match at the disqualification.
+  const result = await simulate({ config: { ...defaultConfig('score', { seed: 22, maxTicks: 70, players: 2 }),
+    width: 64, height: 64, ruleset: 'survival-64' }, participants: [
     script('function move(){return "invalid"}'), greedy,
   ], captureLogs: false });
   assert.equal(result.participants[0]!.deathReason, 'disqualified');
@@ -190,8 +196,10 @@ test('timeouts keep heading and count separately before consecutive failure disq
 
 test('CPU budgets disqualify without allowing an unbounded match', async () => {
   const matchCpuBudgetMs = 1;
+  // survival-64 keeps the match going after the first disqualification, so both scripts must
+  // individually hit the budget; the current ruleset would end it with the first one.
   const result = await simulate({ config: { ...defaultConfig('score', { seed: 4, maxTicks: 100, players: 2 }),
-    matchCpuBudgetMs, initTimeoutMs: 1000, moveTimeoutMs: 1000 },
+    width: 64, height: 64, ruleset: 'survival-64', matchCpuBudgetMs, initTimeoutMs: 1000, moveTimeoutMs: 1000 },
     participants: [script('function move(s){for(let i=0;i<10000;i++) Math.random();return s.you.dir;}'),
       script('function move(s){for(let i=0;i<10000;i++) Math.random();return s.you.dir;}', 1)] });
   assert.ok(result.participants.every((participant) => participant.deathReason === 'disqualified'));

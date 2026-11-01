@@ -5,8 +5,10 @@ import { defaultConfig } from '../runner/config';
 import { createGame, queueDirection, step, type GameState } from './engine';
 import { asciiGrid } from './observe';
 
+// Collision and hit-point mechanics do not depend on board size; a 64×64 board keeps the
+// hand-placed bodies below in bounds. Default sizes are covered by their own test.
 function game(mode: GameMode = 'battle', count = mode === 'solo' ? 1 : 2, teams = false, foods?: Point[]): GameState {
-  return createGame({ config: defaultConfig(mode, { players: count, teams, seed: 41, maxTicks: 200 }),
+  return createGame({ config: { ...defaultConfig(mode, { players: count, teams, seed: 41, maxTicks: 200 }), width: 64, height: 64 },
     participants: Array.from({ length: count }, (_, slot) => ({ slot, name: `蛇${slot}`, team: teams ? slot % 2 : null,
       source: { kind: 'builtin' as const, bot: 'greedy' as const } })), foods });
 }
@@ -20,13 +22,20 @@ function line(x: number, y: number, length: number, dir: -1 | 1): Point[] {
   return Array.from({ length }, (_, index) => ({ x: x + index * dir, y }));
 }
 
-test('survival defaults use a bounded 64x64 board and four food per participant', () => {
+test('survival defaults: 16×16 individual and solo, 32×32 for 2v2, bounded, four food per participant', () => {
+  const participants = (count: number, teams: boolean) => Array.from({ length: count }, (_, slot) => ({ slot, name: `蛇${slot}`,
+    team: teams ? slot % 2 : null, source: { kind: 'builtin' as const, bot: 'greedy' as const } }));
   for (const mode of ['solo', 'score', 'battle'] as const) for (const count of mode === 'solo' ? [1] : [2, 3, 4]) {
-    const state = game(mode, count);
-    assert.equal(state.width, 64); assert.equal(state.height, 64); assert.equal(state.wrap, false);
+    const state = createGame({ config: defaultConfig(mode, { players: count, seed: 41 }), participants: participants(count, false) });
+    assert.equal(state.config.ruleset, 'survival');
+    assert.equal(state.width, 16); assert.equal(state.height, 16); assert.equal(state.wrap, false);
     assert.equal(state.foods.length, count * 4);
     assert.equal(state.config.maxHp, 100);
-    assert.ok(asciiGrid(state, 0).split('\n').every((row) => row.length === 66));
+    assert.ok(asciiGrid(state, 0).split('\n').every((row) => row.length === 18));
+  }
+  for (const mode of ['score', 'battle'] as const) {
+    const state = createGame({ config: defaultConfig(mode, { teams: true, seed: 41 }), participants: participants(4, true) });
+    assert.equal(state.width, 32); assert.equal(state.height, 32); assert.equal(state.foods.length, 16);
   }
   const score = game('score', 2, false, []);
   const victim = pose(score, 0, [{ x: 0, y: 20 }, { x: 1, y: 20 }, { x: 2, y: 20 }], 'left');
@@ -109,7 +118,9 @@ test('body collisions and kills apply to score as well as battle, while teammate
 });
 
 test('a boundary casualty uses its old body this tick, then ceases to block on later ticks', () => {
-  const state = game('score', 3, false, []);
+  // Four snakes so that two remain after the first tick and the match continues.
+  const state = game('score', 4, false, []);
+  pose(state, 3, [{ x: 50, y: 50 }, { x: 49, y: 50 }, { x: 48, y: 50 }], 'right');
   const victim = pose(state, 0, [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }], 'right');
   const wall = pose(state, 1, [{ x: 0, y: 10 }, { x: 10, y: 10 }, { x: 11, y: 10 }], 'left');
   pose(state, 2, [{ x: 40, y: 40 }, { x: 39, y: 40 }, { x: 38, y: 40 }], 'right');
@@ -153,5 +164,43 @@ test('body collisions use post-move bodies regardless of slot order', () => {
     step(state);
     assert.equal(other.deathReason, 'snake', `slots ${s}/${o}/${p}`);
     assert.equal(mover.alive, true, `slots ${s}/${o}/${p}`);
+  }
+});
+
+test('score ends as soon as one snake or one team is left, and ranks by score not survival', () => {
+  // Three snakes: slot 0 and 1 walk into walls, slot 2 survives; slot 0 has the highest score.
+  const solo = game('score', 3, false, []);
+  const leader = pose(solo, 0, [{ x: 0, y: 10 }, { x: 1, y: 10 }, { x: 2, y: 10 }], 'left'); leader.score = 50;
+  pose(solo, 1, [{ x: 63, y: 20 }, { x: 62, y: 20 }, { x: 61, y: 20 }], 'right');
+  const survivor = pose(solo, 2, [{ x: 30, y: 30 }, { x: 29, y: 30 }, { x: 28, y: 30 }], 'right'); survivor.score = 10;
+  step(solo);
+  assert.equal(solo.status, 'ended');
+  assert.equal(solo.endReason, 'last_alive');
+  assert.deepEqual(solo.winners, ['s0']);
+  assert.equal(survivor.alive, true);
+
+  // 2v2: team 1 (slots 1 and 3) is wiped out; team totals decide the winner.
+  const teams = game('score', 4, true, []);
+  pose(teams, 0, [{ x: 30, y: 30 }, { x: 29, y: 30 }, { x: 28, y: 30 }], 'right').score = 10;
+  pose(teams, 2, [{ x: 30, y: 40 }, { x: 29, y: 40 }, { x: 28, y: 40 }], 'right');
+  pose(teams, 1, [{ x: 0, y: 10 }, { x: 1, y: 10 }, { x: 2, y: 10 }], 'left').score = 40;
+  pose(teams, 3, [{ x: 63, y: 20 }, { x: 62, y: 20 }, { x: 61, y: 20 }], 'right');
+  step(teams);
+  assert.equal(teams.status, 'ended');
+  assert.equal(teams.endReason, 'last_alive');
+  assert.equal(teams.winnerTeam, 1);
+});
+
+test('historical rulesets keep their original end rules so recorded replays stay exact', () => {
+  for (const ruleset of ['survival-64', 'classic'] as const) {
+    const state = game('score', 3, false, []);
+    state.config.ruleset = ruleset;
+    if (ruleset === 'classic') { state.config.maxHp = null; for (const snake of state.snakes) snake.hp = null; }
+    pose(state, 0, [{ x: 0, y: 10 }, { x: 1, y: 10 }, { x: 2, y: 10 }], 'left');
+    pose(state, 1, [{ x: 63, y: 20 }, { x: 62, y: 20 }, { x: 61, y: 20 }], 'right');
+    pose(state, 2, [{ x: 30, y: 30 }, { x: 29, y: 30 }, { x: 28, y: 30 }], 'right');
+    step(state);
+    assert.equal(state.snakes.filter((snake) => snake.alive).length, 1, ruleset);
+    assert.equal(state.status, 'running', ruleset);
   }
 });

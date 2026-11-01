@@ -293,7 +293,7 @@ function teammate(state: GameState, a: Snake, b: Snake): boolean {
   return state.teams && a.team === b.team;
 }
 
-/** survival-64 resolves all movement collisions simultaneously, then applies HP. */
+/** survival rulesets resolve all movement collisions simultaneously, then apply HP. */
 function stepSurvival(state: GameState): GameState {
   if (state.status !== 'running') return state;
   state.tick++;
@@ -471,6 +471,11 @@ export function evaluateEnd(state: GameState): void {
       const totals = [0, 1].map((team) => state.snakes.filter((snake) => snake.team === team).reduce((sum, snake) => sum + snake.score, 0));
       finishTeamScore(state, totals, 'all_dead');
       return;
+    } else if (state.config.ruleset === 'survival' && new Set(living.map((snake) => snake.team)).size === 1) {
+      // Lethal collisions leave nothing to contest once one team remains; totals still decide.
+      const totals = [0, 1].map((team) => state.snakes.filter((snake) => snake.team === team).reduce((sum, snake) => sum + snake.score, 0));
+      finishTeamScore(state, totals, 'last_alive');
+      return;
     }
     if (state.mode === 'score' && state.targetScore !== null) {
       if (state.snakes.some((snake) => snake.score >= state.targetScore!)) {
@@ -509,6 +514,9 @@ export function evaluateEnd(state: GameState): void {
     finishTopScore(state, 'target_score');
   } else if (!living.length) {
     finishTopScore(state, 'all_dead');
+  } else if (state.config.ruleset === 'survival' && living.length === 1) {
+    // The last survivor cannot be contested any more; ranking stays by score.
+    finishTopScore(state, 'last_alive');
   } else if (state.tick >= state.maxTicks) {
     finishTopScore(state, 'max_ticks');
   }

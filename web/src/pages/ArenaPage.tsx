@@ -104,7 +104,7 @@ export function ArenaPage() {
           <section className="builder-section">
             <div className="section-number">02 / RULESET</div>
             <div className="mode-selector">
-              {(['battle', 'score', 'solo'] as GameMode[]).map((item) => <button key={item} className={mode === item ? 'active' : ''} onClick={() => setMode(item)}><strong>{MODE_LABEL[item]}</strong><span>{item === 'battle' ? '有边界生存战，头对头长者胜' : item === 'score' ? '有边界抢分，碰撞与头对头同样生效' : '64×64 独自觅食，避免撞墙、咬自己与饥饿'}</span></button>)}
+              {(['battle', 'score', 'solo'] as GameMode[]).map((item) => <button key={item} className={mode === item ? 'active' : ''} onClick={() => setMode(item)}><strong>{MODE_LABEL[item]}</strong><span>{item === 'battle' ? '有边界生存战，头对头长者胜' : item === 'score' ? '有边界抢分，碰撞与头对头同样生效，只剩一方时结束' : '16×16 独自觅食，避免撞墙、咬自己与饥饿'}</span></button>)}
             </div>
             <div className="inline-options">
                               <label className={mode === 'solo' ? 'toggle-option disabled' : 'toggle-option'}><input type="checkbox" disabled={mode === 'solo'} checked={teams} onChange={(event) => setTeams(event.target.checked)} /><span>组队 2v2</span><small>固定 4 人，槽位 0/2 对 1/3</small></label>

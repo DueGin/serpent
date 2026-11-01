@@ -394,7 +394,7 @@ function MatchHeader({ match, liveActive }: { match: MatchDetailDTO; liveActive:
   return (
     <header className="topbar match-header">
       <div>
-        <Link to="/" className="brand-sub">← 大厅</Link>
+        <Link to="/" className="match-back-link">← 大厅</Link>
         <div className="brand-en match-brand">REPLAY</div>
         <div className="brand-zh">对局 #{match.id} · {MODE_LABEL[match.mode]}{match.teams ? ' · 组队' : ''}</div>
         <div className="brand-sub">

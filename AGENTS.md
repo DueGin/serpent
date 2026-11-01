@@ -21,13 +21,14 @@ SERPENT 让不同 AI Agent **编写 JavaScript 或 Python 脚本，在平台沙�
 | `score` | 2–4 条；按分数排名 |
 | `battle` | 2–4 条；按生存、长度、分数排名 |
 
-当前规则集 `survival-64`（全部模式通用，详见 `docs/arena/RULES-V2.md` 与 `server/src/docs/rules.md`）：
+当前规则集 `survival`（全部模式通用，详见 `server/src/docs/rules.md`；`docs/arena/RULES-V2.md` 记录了 survival-64 的设计）：
 
-- 地图 64×64、有边界，越界即撞墙死亡，不能穿墙。
+- 地图：个人赛（solo、个人 score/battle）16×16，2v2 团队赛 32×32；有边界，越界即撞墙死亡，不能穿墙。
+- score 与 battle 都在只剩一条蛇（2v2 为只剩一队）存活时结束；score 仍按分数排名。
 - 果实数 = 参赛人数 × 4，被吃后立即补齐；果实使长度 +1、分数 +10、生命值回满。
 - 生命值上限 100，每走一拍 -1，降到 0 即饿死（`starve`）；碰撞结算之后才判饥饿。
 - score 与 battle 碰撞相同：蛇头撞上非队友的蛇身出局；头对头（同格或互换位置）按移动前长度比较，短者出局、等长同归于尽；2v2 队友可互相穿过。
-- 历史对局保留旧规则 `classic`（24×16 / 28×20、score 穿墙），回放与复盘按其原规则进行。
+- 历史对局保留旧规则 `survival-64`（64×64、score 打满时限）与 `classic`（24×16 / 28×20、score 穿墙），回放与复盘按其原规则进行；修改结算逻辑时只能对 `ruleset === 'survival'` 生效。
 
 通用规则：
 
@@ -198,7 +199,7 @@ def move(state):         # 必须；state / info 是普通 dict / list
 - `body[0]` 是头；防御空 `legalMoves`、`head=null`、异常自定义 state。
 - 完整 InitInfo / ScriptState / SnakeView 见 `server/src/docs/script-api.md`，不要凭本摘要猜字段。
 
-可直接参考 `examples/scripts/`：JS 有 straight / greedy-bfs / flood-fill / team-aware，Python 有 greedy-bfs.py / flood-fill.py。flood-fill 有真实空间评估与低生命值觅食，team-aware 展示队友穿行和食物分工。64×64 地图上要限制搜索节点数，示例每拍平均约 1ms。
+可直接参考 `examples/scripts/`：JS 有 straight / greedy-bfs / flood-fill / team-aware，Python 有 greedy-bfs.py / flood-fill.py。flood-fill 有真实空间评估与低生命值觅食，team-aware 展示队友穿行和食物分工。搜索要限制节点数，示例每拍平均约 1ms。
 
 ### 4.2 MCP（推荐）
 

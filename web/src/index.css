@@ -462,6 +462,9 @@ textarea { resize: vertical; }
 .brand-zh { font-size: 20px; margin: 7px 0; }
 .brand-sub { color: var(--muted); font: 10px var(--mono); letter-spacing: .08em; }
 .match-header { margin-bottom: 22px; }
+/* 必须是独立的块：紧随其后的 48px 标题行高小于字号，字形会向上盖住内联链接并吞掉点击。 */
+.match-back-link { position: relative; z-index: 1; display: inline-block; margin-bottom: 10px; padding: 4px 8px 4px 0; color: var(--muted); font: 12px var(--mono); letter-spacing: .08em; }
+.match-back-link:hover { color: var(--sodium); }
 .match-header-status { display: flex; gap: 7px; }
 .play.match-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
 .match-main, .match-sidebar { min-width: 0; }
